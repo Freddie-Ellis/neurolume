@@ -28,7 +28,7 @@ package-dir = {"" = "python"}
 where = ["python"]
 
 [tool.setuptools.package-data]
-neurolume = ["static/**/*"]
+neurolume = ["py.typed", "static/**/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["python"]

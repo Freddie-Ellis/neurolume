@@ -1,14 +1,14 @@
 """Framework-independent graph data used by the viewer."""
 
-from typing import Any
+from typing import Any, ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION: Final[str] = "1.0"
 
 
 class ModelInfo(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     name: str
     framework: str
@@ -16,7 +16,7 @@ class ModelInfo(BaseModel):
 
 
 class GraphNode(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     id: str
     type: str
@@ -30,7 +30,7 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     source: str
     target: str
@@ -38,7 +38,7 @@ class GraphEdge(BaseModel):
 
 
 class GraphGroup(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     id: str
     label: str
@@ -47,7 +47,7 @@ class GraphGroup(BaseModel):
 
 
 class Graph(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     schema_version: str = SCHEMA_VERSION
     model: ModelInfo

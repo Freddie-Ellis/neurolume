@@ -51,22 +51,19 @@ def create_app(graph: Graph | None = None) -> FastAPI:
     return app
 
 
-def show(graph: Graph | None = None, *, port: int = 0, open_browser: bool = True) -> None:
+def show(graph: Graph | None = None, *, port: int = 8000, open_browser: bool = True) -> None:
     """Serve a graph locally and optionally open it in the default browser."""
     app = create_app(graph)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
     server = uvicorn.Server(config)
 
-    def run() -> None:
-        server.run()
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
     if open_browser:
-        # Uvicorn chooses a port only after startup; a fixed default keeps the
-        # Phase 0 API deterministic while later phases can add port discovery.
-        url = f"http://127.0.0.1:{port or 8000}"
-        webbrowser.open(url)
+        threading.Timer(
+            0.5,
+            webbrowser.open,
+            args=(f"http://127.0.0.1:{port}",),
+        ).start()
+    server.run()
 
 
 def show_demo() -> None:
