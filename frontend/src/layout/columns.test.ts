@@ -11,7 +11,7 @@ import {
 } from "./columns";
 
 function node(id: string, type: GraphNode["type"], output_shape: number[], input_shape: number[] = []): GraphNode {
-  return { id, type, label: id, group: null, input_shape, output_shape, params: {}, param_count: 0, activation: null };
+  return { id, type, label: id, group: null, input_shape, output_shape, params: {}, param_count: 0, activation: null, notes: null };
 }
 
 const mlp: Graph = {

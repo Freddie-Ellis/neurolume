@@ -220,6 +220,7 @@ function networkCard(graph: Graph, group: GraphGroup, id: string): Card {
       params: {},
       param_count: inner.model.total_params,
       activation: null,
+      notes: null,
     },
     inputShape,
     outputShape,
@@ -252,5 +253,5 @@ function nodeCard(node: GraphNode, id: string): Card {
 }
 
 function terminal(id: string, type: "input" | "output", label: string, shape: number[]): GraphNode {
-  return { id, type, label, group: null, input_shape: shape, output_shape: shape, params: {}, param_count: 0, activation: null };
+  return { id, type, label, group: null, input_shape: shape, output_shape: shape, params: {}, param_count: 0, activation: null, notes: null };
 }

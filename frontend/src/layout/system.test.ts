@@ -3,7 +3,7 @@ import type { Graph, GraphNode } from "../schema";
 import { MAX_LINK_STRANDS, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
 
 function node(id: string, type: GraphNode["type"], group: string | null, output_shape: number[], input_shape: number[] = []): GraphNode {
-  return { id, type, label: id, group, input_shape, output_shape, params: {}, param_count: 10, activation: null };
+  return { id, type, label: id, group, input_shape, output_shape, params: {}, param_count: 10, activation: null, notes: null };
 }
 
 const edge = (source: string, target: string, label: string | null = null) => ({ source, target, tensor_shape: [4], label });

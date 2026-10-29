@@ -9,7 +9,7 @@
 | `adapters/base.py` | `to_graph()` dispatch (Graph → as-is, System → `.to_graph()`, torch → adapter), `fold_activations()` |
 | `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks |
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
-| `system.py` | `System` builder: `add(name, model, x)`, `block(name, ...)`, `connect(a, b, label=)` |
+| `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=)` |
 | `server.py` | FastAPI app, `show()` (background thread, free port), `demo_graph()` fallback |
 | `demo.py` | `demo_model(nested=False)` / `demo_input()`; torch imported inside the functions |
 
@@ -25,13 +25,15 @@
   (`fold_activations_into_layers=False` to keep them).
 - `weights` is keyed by dense node id; never ship full matrices.
 
-## Groups and systems (schema 1.1)
+## Groups and systems (schema 1.2)
 
 - A top-level group (`parent=None`) = one network. The frontend shows an
   overview whenever top-level groups exist.
 - `System.to_graph()` prefixes node ids with `"<network>/"` and sets `group`;
   blocks are ungrouped `custom` nodes; links are ordinary edges (with optional
   `label`) from a network's last `output` node to the next one's first `input`.
+- Block `notes` (schema 1.2, `GraphNode.notes`) is Markdown with `$...$` /
+  `$$...$$` LaTeX, dedented with `inspect.cleandoc`; the viewer opens it as a page.
 - torch auto-grouping (`group_submodules=None` → auto): nodes are grouped by the
   top-level child module that owns them, when ≥2 children each hold ≥2 layers.
   Identity of modules is matched via `named_modules()`.

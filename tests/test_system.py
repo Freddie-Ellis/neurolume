@@ -38,6 +38,22 @@ def test_blocks_are_ungrouped_nodes() -> None:
     assert graph.edges[-1].source == "camera" and graph.edges[-1].target == "net/input"
 
 
+def test_block_notes_are_dedented_markdown() -> None:
+    system = System()
+    system.block(
+        "loss",
+        notes=r"""
+            # Loss
+            Mean squared error: $\frac{1}{n}\sum (x - \hat{x})^2$
+        """,
+    )
+    system.block("plain")
+    nodes = {node.id: node for node in to_graph(system).nodes}
+
+    assert nodes["loss"].notes == "# Loss\nMean squared error: $\\frac{1}{n}\\sum (x - \\hat{x})^2$"
+    assert nodes["plain"].notes is None
+
+
 def test_component_names_must_be_unique_and_simple() -> None:
     system = System()
     system.block("a")

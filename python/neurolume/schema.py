@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION: Final[str] = "1.1"
+SCHEMA_VERSION: Final[str] = "1.2"
 
 NodeType = Literal[
     "input",
@@ -52,6 +52,8 @@ class GraphNode(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     param_count: int = Field(default=0, ge=0)
     activation: str | None = None
+    # Longer Markdown text (with $LaTeX$ maths) shown when the node is opened, e.g. a System block.
+    notes: str | None = None
 
 
 class GraphEdge(BaseModel):

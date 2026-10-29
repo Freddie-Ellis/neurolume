@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "model": {
     "name": "MLP",
     "framework": "pytorch",
@@ -19,7 +19,8 @@
       ],
       "params": {},
       "param_count": 0,
-      "activation": null
+      "activation": null,
+      "notes": null
     },
     {
       "id": "flatten",
@@ -39,7 +40,8 @@
         "end_dim": -1
       },
       "param_count": 0,
-      "activation": null
+      "activation": null,
+      "notes": null
     },
     {
       "id": "fc1",
@@ -58,7 +60,8 @@
         "bias": true
       },
       "param_count": 401920,
-      "activation": "relu"
+      "activation": "relu",
+      "notes": null
     },
     {
       "id": "dropout",
@@ -75,7 +78,8 @@
         "p": 0.2
       },
       "param_count": 0,
-      "activation": null
+      "activation": null,
+      "notes": null
     },
     {
       "id": "fc2",
@@ -94,7 +98,8 @@
         "bias": true
       },
       "param_count": 131328,
-      "activation": "relu"
+      "activation": "relu",
+      "notes": null
     },
     {
       "id": "fc3",
@@ -113,7 +118,8 @@
         "bias": true
       },
       "param_count": 2570,
-      "activation": null
+      "activation": null,
+      "notes": null
     },
     {
       "id": "output",
@@ -128,7 +134,8 @@
       ],
       "params": {},
       "param_count": 0,
-      "activation": null
+      "activation": null,
+      "notes": null
     }
   ],
   "edges": [

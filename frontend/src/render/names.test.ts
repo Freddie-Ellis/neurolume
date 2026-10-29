@@ -3,7 +3,7 @@ import type { Graph, GraphNode } from "../schema";
 import { nameLayers, titleFor } from "./network";
 
 function node(id: string, type: GraphNode["type"], group: string | null = null, label = "Linear"): GraphNode {
-  return { id, type, label, group, input_shape: [], output_shape: [4], params: {}, param_count: 0, activation: null };
+  return { id, type, label, group, input_shape: [], output_shape: [4], params: {}, param_count: 0, activation: null, notes: null };
 }
 
 function graph(nodes: GraphNode[]): Graph {

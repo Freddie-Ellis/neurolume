@@ -4,9 +4,10 @@ import "./style.css";
 import { layoutGraph } from "./layout/columns";
 import { isSystem, layoutSystem, subgraph } from "./layout/system";
 import { type Network, buildNetwork, disposeNetwork, escapeHtml } from "./render/network";
+import { buildNote } from "./render/note";
 import { buildSystem } from "./render/system";
 import { type Bounds, Viewer } from "./render/viewer";
-import { SCHEMA_VERSION, type Graph } from "./schema";
+import { SCHEMA_VERSION, type Graph, type GraphNode } from "./schema";
 import {
   type Theme,
   colormapCss,
@@ -51,13 +52,17 @@ async function loadGraph(): Promise<Graph> {
 const ZOOM_OUT_TO_PARENT = 0.5;
 /** Zooming into a network card until it fills this fraction of the screen opens it. */
 const ZOOM_IN_FILL = 0.6;
+/** A note is fitted as if it were this tall, so short notes aren't blown up and long ones open at the top. */
+const NOTE_FIT_HEIGHT = 860;
 /** After opening a network from the overview, scroll zooming is ignored this long. */
 const ZOOM_PAUSE_MS = 300;
 
-/** One screen: either the system overview or the detailed view of one network. */
+/** One screen: the system overview, the detailed view of one network, or a block's notes. */
 interface View {
-  kind: "system" | "network";
+  kind: "system" | "network" | "note";
   graph: Graph;
+  /** The block whose notes a "note" view shows. */
+  node?: GraphNode;
   bounds: Bounds;
   /** Where Esc and the Back button go, or null at the top level. */
   parent: View | null;
@@ -76,9 +81,22 @@ function systemView(graph: Graph, open: (view: View) => void): View {
     graph,
     bounds: layout.bounds,
     parent: null,
-    build: (theme) => buildSystem(layout, theme, (groupId) => open(networkView(subgraph(graph, groupId), view))),
+    build: (theme) =>
+      buildSystem(layout, theme, {
+        network: (groupId) => open(networkView(subgraph(graph, groupId), view)),
+        note: (node) => void noteView(node, view).then(open, (error: unknown) => console.error(error)),
+      }),
   };
   return view;
+}
+
+async function noteView(node: GraphNode, parent: View): Promise<View> {
+  const { notePage } = await import("./ui/notes"); // Markdown + KaTeX load on first use
+  const page = await notePage(node);
+  // Centre a short page vertically; line a long one up with the top of the screen.
+  const top = Math.max(0, NOTE_FIT_HEIGHT - page.height) / 2;
+  const bounds = { left: 0, right: page.width, top, bottom: top - NOTE_FIT_HEIGHT };
+  return { kind: "note", graph: parent.graph, node, bounds, parent, build: (theme) => buildNote(page, theme) };
 }
 
 /**
@@ -164,6 +182,14 @@ class Stage {
 }
 
 function renderTitleCard(card: HTMLElement, view: View, system: Graph): void {
+  if (view.kind === "note" && view.node) {
+    const description = view.node.params["description"];
+    card.innerHTML = `
+      <p class="eyebrow">Notes · in ${escapeHtml(system.model.name)}</p>
+      <h1>${escapeHtml(view.node.label)}</h1>
+      ${typeof description === "string" ? `<p class="title-meta"><span>${escapeHtml(description)}</span></p>` : ""}`;
+    return;
+  }
   const { model, nodes, groups } = view.graph;
   const stats =
     view.kind === "system"
@@ -180,7 +206,8 @@ function renderTitleCard(card: HTMLElement, view: View, system: Graph): void {
 }
 
 function hintFor(view: View): string {
-  if (view.kind === "system") return "Click or zoom into a network to open it · Drag to pan · Double-click empty space to fit";
+  if (view.kind === "system") return "Click or zoom into a card to open it · Drag to pan · Double-click empty space to fit";
+  if (view.kind === "note") return "Zoom out or press Esc to go back · Drag to pan · Scroll to zoom";
   const back = view.parent ? "Zoom out or press Esc to go back · " : "";
   return `${back}Drag to pan · Scroll to zoom · Click a layer for details · Double-click empty space to fit`;
 }

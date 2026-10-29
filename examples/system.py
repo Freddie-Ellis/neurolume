@@ -25,11 +25,47 @@ def build_system() -> neurolume.System:
     torch.manual_seed(0)
     system = neurolume.System("Sensor autoencoder")
 
-    sensor = system.block("sensor", label="Sensor", description="32 readings per sample", output_shape=[32])
+    sensor = system.block(
+        "sensor",
+        label="Sensor",
+        description="32 readings per sample",
+        output_shape=[32],
+        notes="""
+            ## What the sensor sends
+
+            Each sample is **32 readings** taken over one second, scaled to
+            zero mean and unit variance before they reach the encoder.
+
+            | Channel | Readings | Unit |
+            | --- | --- | --- |
+            | Vibration | 16 | g |
+            | Temperature | 8 | °C |
+            | Current | 8 | A |
+        """,
+    )
     encoder = system.add("encoder", mlp(32, 64, 64, 16), torch.randn(1, 32), label="Encoder")
     decoder = system.add("decoder", mlp(16, 64, 64, 32), torch.randn(1, 16), label="Decoder")
     classifier = system.add("classifier", mlp(16, 12, 3), torch.randn(1, 16), label="Classifier")
-    loss = system.block("loss", label="Reconstruction loss", input_shape=[32])
+    loss = system.block(
+        "loss",
+        label="Reconstruction loss",
+        description="Mean squared error",
+        input_shape=[32],
+        notes=r"""
+            ## Mean squared error
+
+            The decoder is trained to rebuild the sensor readings $x$ from the
+            latent code. The loss is the average squared difference between the
+            readings and the reconstruction $\hat{x}$:
+
+            $$
+            \mathcal{L}(x, \hat{x}) = \frac{1}{n} \sum_{i=1}^{n} (x_i - \hat{x}_i)^2
+            $$
+
+            A sample the model reconstructs badly (high $\mathcal{L}$) is a sign
+            of a fault it has not seen before.
+        """,
+    )
     prediction = system.block("prediction", label="Fault type", input_shape=[3])
 
     system.connect(sensor, encoder, label="readings")

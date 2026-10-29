@@ -15,6 +15,7 @@ layers with the same name.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any
 
@@ -56,8 +57,15 @@ class System:
         description: str | None = None,
         input_shape: list[int] | None = None,
         output_shape: list[int] | None = None,
+        notes: str | None = None,
     ) -> Component:
-        """Add a plain labelled block, such as a tokenizer, data source or loss."""
+        """Add a plain labelled block, such as a tokenizer, data source or loss.
+
+        `description` is one short line shown on the block's card. `notes` is
+        Markdown shown on its own page when the block is opened; it may contain
+        maths as LaTeX between `$...$` (inline) or `$$...$$` (display). Use a
+        raw string (an r-prefixed string) so backslashes reach LaTeX unchanged.
+        """
         self._check_name(name)
         self._blocks[name] = GraphNode(
             id=name,
@@ -66,6 +74,9 @@ class System:
             input_shape=input_shape or [],
             output_shape=output_shape or [],
             params={"description": description} if description else {},
+            # cleandoc strips the indentation of a triple-quoted string, which
+            # Markdown would otherwise read as a code block.
+            notes=inspect.cleandoc(notes) if notes else None,
         )
         return Component(name, "block")
 

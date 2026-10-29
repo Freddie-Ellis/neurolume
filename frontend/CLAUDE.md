@@ -9,7 +9,7 @@ from the repo root. The user refreshes the browser; no Python restart needed.
 
 | File | What it does |
 | --- | --- |
-| `main.ts` | Entry. `View` (system overview or one network), `Stage` (shows a view, rebuilds on theme change, back/fit, zoom-in/zoom-out navigation), title card, controls (Overview, Fit, colourmap picker, Light/Dark), keyboard |
+| `main.ts` | Entry. `View` (system overview, one network, or a block's notes; `noteView()` lazy-imports `ui/notes`), `Stage` (shows a view, rebuilds on theme change, back/fit, zoom-in/zoom-out navigation), title card, controls (Overview, Fit, colourmap picker, Light/Dark), keyboard |
 | `schema.ts` | **Generated** from pydantic — never edit by hand |
 | `theme.ts` | `themes` (dark/light), `colormaps` (5 per theme), localStorage helpers, `withColormap()` |
 | `layout/columns.ts` | Single-network layout: which nodes are columns vs bands, neuron slots (cap 64, ellipsis gap), tall equal-height panels, `linkSegments()` (weights → visible pairs) |
@@ -18,9 +18,11 @@ from the repo root. The user refreshes the browser; no Python restart needed.
 | `render/viewer.ts` | three.js renderer, ortho camera (1 world unit = 1 CSS px at zoom 1), pan/zoom, bloom, render-on-demand, `onUserZoom`, `pauseZoom()` |
 | `render/network.ts` | Detailed view: panels, bands, neurons, labels, `titleFor()`/`nameLayers()`, `setHighlight()`, `disposeNetwork()` |
 | `render/edges.ts` | Edge `LineSegments` per link (RGBA: colour from gradient, alpha from weight strength) |
-| `render/system.ts` | Overview: cards with mini previews, links as bundles of strands (one per tensor value, cap 48; ribbon + arrowhead only when the shape is unknown), link chips; network cards get `activate` |
+| `render/note.ts` | Note page in the scene: a CSS2DObject whose page rescales itself by camera zoom in `onBeforeRender` |
+| `render/system.ts` | Overview: cards with mini previews, links as bundles of strands (one per tensor value, cap 48; ribbon + arrowhead only when the shape is unknown), link chips; network cards and blocks with `notes` get `activate` (handlers in `OpenHandlers`) |
 | `ui/interaction.ts` | Hover/tooltip/click/dblclick; `pickAt()`; listeners use an AbortController (`detach()`) |
 | `ui/inspector.ts` | Right-hand layer details panel |
+| `ui/notes.ts` | Markdown → sanitised HTML (marked + marked-katex-extension + DOMPurify), `notePage()` measures it off-screen. **Dynamically imported** so KaTeX isn't in the main bundle |
 | `ui/format.ts` | Number/shape/activation/framework formatting |
 | `style.css` | Tokens per `[data-theme]`, labels, cards, controls, inspector, colourmap menu |
 
@@ -44,6 +46,10 @@ from the repo root. The user refreshes the browser; no Python restart needed.
   released while the user kept scrolling.
 
 ## Gotchas
+
+- Note pages live in the `.labels` layer, so they have `pointer-events: none`:
+  links in notes aren't clickable and text can't be selected (wheel/drag must
+  reach the canvas for zoom navigation).
 
 - Neuron ids in systems are prefixed (`encoder/0`); always display names via
   `titleFor()`, which strips prefixes and numbers Sequential children in drawing order.
