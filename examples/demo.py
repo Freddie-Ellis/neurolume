@@ -9,4 +9,4 @@ import neurolume
 from neurolume.demo import demo_input, demo_model
 
 if __name__ == "__main__":
-    neurolume.show(demo_model(nested=True), demo_input(), port=8000)
+    neurolume.show(demo_model(), demo_input(), port=8000)
