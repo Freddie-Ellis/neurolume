@@ -26,8 +26,8 @@ def build_system() -> neurolume.System:
     system = neurolume.System("Sensor autoencoder")
 
     sensor = system.block("sensor", label="Sensor", description="32 readings per sample", output_shape=[32])
-    encoder = system.add("encoder", mlp(32, 64, 16), torch.randn(1, 32), label="Encoder")
-    decoder = system.add("decoder", mlp(16, 64, 32), torch.randn(1, 16), label="Decoder")
+    encoder = system.add("encoder", mlp(32, 64, 64, 16), torch.randn(1, 32), label="Encoder")
+    decoder = system.add("decoder", mlp(16, 64, 64, 32), torch.randn(1, 16), label="Decoder")
     classifier = system.add("classifier", mlp(16, 12, 3), torch.randn(1, 16), label="Classifier")
     loss = system.block("loss", label="Reconstruction loss", input_shape=[32])
     prediction = system.block("prediction", label="Fault type", input_shape=[3])

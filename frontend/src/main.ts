@@ -52,7 +52,7 @@ const ZOOM_OUT_TO_PARENT = 0.5;
 /** Zooming into a network card until it fills this fraction of the screen opens it. */
 const ZOOM_IN_FILL = 0.6;
 /** After opening a network from the overview, scroll zooming is ignored this long. */
-const ZOOM_PAUSE_MS = 50;
+const ZOOM_PAUSE_MS = 1000;
 
 /** One screen: either the system overview or the detailed view of one network. */
 interface View {
