@@ -123,3 +123,38 @@ def test_systems_keep_feature_maps_under_prefixed_ids() -> None:
     system.add("cnn", LeNet(), torch.from_numpy(sample_digit()).reshape(1, 1, 28, 28))
     maps = system.to_graph().feature_maps
     assert maps is not None and "cnn/conv1" in maps
+
+
+def test_dense_weights_after_flatten_use_channels_first_indices() -> None:
+    # One strong weight from row 1, column 2, channel 3 of a 2 x 4 x 5 (H x W x C) map.
+    model = keras.Sequential([keras.Input((2, 4, 5)), layers.Flatten(), layers.Dense(1, use_bias=False)])
+    kernel = np.zeros((2 * 4 * 5, 1), dtype="float32")
+    kernel[(1 * 4 + 2) * 5 + 3, 0] = 9.0  # Keras flattens height, width, channels
+    model.layers[1].kernel.assign(kernel)
+
+    weights = to_graph(model, weight_k=1).weights
+    assert weights is not None
+    [(index, _, value)] = next(iter(weights.values())).pairs
+    assert (index, value) == (3 * (2 * 4) + 1 * 4 + 2, 9.0)  # channels-first: channel, row, column
+
+
+def test_nested_models_become_groups_that_edges_pass_through() -> None:
+    from keras_resnet import build_resnet
+
+    from neurolume.demo import sample_digit
+
+    keras.utils.set_random_seed(0)
+    graph = to_graph(build_resnet(), sample_digit().reshape(1, 28, 28, 1))
+    assert [(group.id, group.parent) for group in graph.groups] == [("block1", None), ("block2", None)]
+    groups = {node.id: node.group for node in graph.nodes}
+    block1 = [node for node in graph.nodes if node.group == "block1"]
+    assert [node.type for node in block1] == ["conv2d", "conv2d", "add"]
+    # The block's first conv is fed by the stem, and its add reads the stem too (the skip connection).
+    add = block1[-1].id
+    assert sorted(edge.source for edge in graph.edges if edge.target == add) == sorted([block1[1].id, "stem"])
+    # The layer after the block reads the block's add (its ReLU is folded in), not the block itself.
+    assert [edge.source for edge in graph.edges if edge.target == "pool"] == [add]
+    assert "block1" not in groups  # the nested model is not a node of its own
+    # Shapes and feature maps are known inside the nested blocks too.
+    assert block1[0].output_shape == [8, 28, 28]
+    assert graph.feature_maps is not None and block1[0].id in graph.feature_maps

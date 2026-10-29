@@ -93,3 +93,23 @@ def test_torch_submodules_are_grouped_automatically() -> None:
 
     flat = to_graph(Autoencoder(), torch.randn(1, 1, 28, 28), weights=None, group_submodules=False)
     assert flat.groups == []
+
+
+def test_a_system_inside_a_system_links_to_its_ends() -> None:
+    pytest.importorskip("torch")
+    sys.path.insert(0, str(ROOT / "examples"))
+    from system import build_system
+
+    outer = System("Outer")
+    source = outer.block("Source", output_shape=[32])
+    pipeline = outer.add("pipe", build_system())
+    sink = outer.block("Sink")
+    outer.connect(source, pipeline)
+    outer.connect(pipeline, sink)
+    graph = outer.to_graph()
+
+    # The inner System opens as its own overview: its networks are groups inside "pipe".
+    assert {(group.id, group.parent) for group in graph.groups} >= {("pipe", None), ("pipe/encoder", "pipe")}
+    # Links attach to the inner system's ends (its sensor and prediction blocks), not to a network inside it.
+    assert any(edge.source == "Source" and edge.target == "pipe/sensor" for edge in graph.edges)
+    assert any(edge.source == "pipe/prediction" and edge.target == "Sink" for edge in graph.edges)
