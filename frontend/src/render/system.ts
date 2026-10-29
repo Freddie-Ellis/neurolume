@@ -68,7 +68,7 @@ function cardLabels(card: Card, pickable: Pickable): THREE.Object3D[] {
   if (card.group) {
     const framework = card.group.framework ? formatFramework(card.group.framework) : "Network";
     details = `${framework} · ${card.layerCount} layers · ${formatParams(card.paramCount)} params`;
-    footer = `${shapeText(card.inputShape)} → ${shapeText(card.outputShape)}<span class="open-hint">Open →</span>`;
+    footer = `${shapeText(card.inputShape)} → ${shapeText(card.outputShape)}`;
   } else {
     const description = card.node.params["description"];
     details = typeof description === "string" ? escapeHtml(description) : kindText(card);

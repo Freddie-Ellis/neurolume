@@ -23,6 +23,8 @@ const MAX_ZOOM = 20;
 /** Rendering above 2x pixel density costs a lot of GPU time for detail nobody can see. */
 export const MAX_PIXEL_RATIO = 2;
 const LOW_DETAIL_ZOOM = 0.45;
+/** After a zoom pause ends, zoom speed eases from 0 back to full over this long. */
+const ZOOM_EASE_IN_MS = 500;
 
 export class Viewer {
   readonly scene = new THREE.Scene();
@@ -36,7 +38,7 @@ export class Viewer {
   private needsRender = true;
   /** Called after the user zooms with the scroll wheel (not after fitTo), with the new zoom and the cursor position. */
   onUserZoom: ((zoom: number, clientX: number, clientY: number) => void) | null = null;
-  /** Scroll zooming is ignored until this time (performance.now() milliseconds). */
+  /** Scroll zooming is ignored until this time (performance.now() ms), then eases back in. */
   private zoomPausedUntil = 0;
 
   constructor(
@@ -104,9 +106,21 @@ export class Viewer {
     return new THREE.Vector3(ndc.x, ndc.y, 0).unproject(this.camera);
   }
 
-  /** Ignore scroll zooming for a while, e.g. so leftover scrolling doesn't carry into a view that just opened. */
+  /**
+   * Ignore scroll zooming for `milliseconds`, so leftover scrolling doesn't
+   * carry into a view that just opened. Afterwards zoom speed ramps back up
+   * over ZOOM_EASE_IN_MS, so a scroll that is still going doesn't lurch.
+   */
   pauseZoom(milliseconds: number): void {
     this.zoomPausedUntil = performance.now() + milliseconds;
+  }
+
+  /** 0 while paused, rising smoothly to 1 as the pause wears off. */
+  private zoomStrength(): number {
+    const t = (performance.now() - this.zoomPausedUntil) / ZOOM_EASE_IN_MS;
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    return t * t * (3 - 2 * t); // smoothstep
   }
 
   /** The view's size in CSS pixels. */
@@ -158,10 +172,11 @@ export class Viewer {
       "wheel",
       (event) => {
         event.preventDefault();
-        if (performance.now() < this.zoomPausedUntil) return;
+        const strength = this.zoomStrength();
+        if (strength === 0) return;
         // Zoom towards the cursor: keep the world point under it fixed.
         const before = this.toWorld(event.clientX, event.clientY);
-        this.camera.zoom = clamp(this.camera.zoom * Math.exp(-event.deltaY * 0.0015), MIN_ZOOM, MAX_ZOOM);
+        this.camera.zoom = clamp(this.camera.zoom * Math.exp(-event.deltaY * 0.0015 * strength), MIN_ZOOM, MAX_ZOOM);
         this.camera.updateProjectionMatrix();
         const after = this.toWorld(event.clientX, event.clientY);
         this.camera.position.x += before.x - after.x;
