@@ -1,0 +1,188 @@
+{
+  "schema_version": "1.1",
+  "model": {
+    "name": "MLP",
+    "framework": "pytorch",
+    "total_params": 535818
+  },
+  "nodes": [
+    {
+      "id": "input",
+      "type": "input",
+      "label": "Input",
+      "group": null,
+      "input_shape": [],
+      "output_shape": [
+        1,
+        28,
+        28
+      ],
+      "params": {},
+      "param_count": 0,
+      "activation": null
+    },
+    {
+      "id": "flatten",
+      "type": "flatten",
+      "label": "Flatten",
+      "group": null,
+      "input_shape": [
+        1,
+        28,
+        28
+      ],
+      "output_shape": [
+        784
+      ],
+      "params": {
+        "start_dim": 1,
+        "end_dim": -1
+      },
+      "param_count": 0,
+      "activation": null
+    },
+    {
+      "id": "fc1",
+      "type": "dense",
+      "label": "Linear",
+      "group": null,
+      "input_shape": [
+        784
+      ],
+      "output_shape": [
+        512
+      ],
+      "params": {
+        "in_features": 784,
+        "out_features": 512,
+        "bias": true
+      },
+      "param_count": 401920,
+      "activation": "relu"
+    },
+    {
+      "id": "dropout",
+      "type": "dropout",
+      "label": "Dropout",
+      "group": null,
+      "input_shape": [
+        512
+      ],
+      "output_shape": [
+        512
+      ],
+      "params": {
+        "p": 0.2
+      },
+      "param_count": 0,
+      "activation": null
+    },
+    {
+      "id": "fc2",
+      "type": "dense",
+      "label": "Linear",
+      "group": null,
+      "input_shape": [
+        512
+      ],
+      "output_shape": [
+        256
+      ],
+      "params": {
+        "in_features": 512,
+        "out_features": 256,
+        "bias": true
+      },
+      "param_count": 131328,
+      "activation": "relu"
+    },
+    {
+      "id": "fc3",
+      "type": "dense",
+      "label": "Linear",
+      "group": null,
+      "input_shape": [
+        256
+      ],
+      "output_shape": [
+        10
+      ],
+      "params": {
+        "in_features": 256,
+        "out_features": 10,
+        "bias": true
+      },
+      "param_count": 2570,
+      "activation": null
+    },
+    {
+      "id": "output",
+      "type": "output",
+      "label": "Output",
+      "group": null,
+      "input_shape": [
+        10
+      ],
+      "output_shape": [
+        10
+      ],
+      "params": {},
+      "param_count": 0,
+      "activation": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "input",
+      "target": "flatten",
+      "tensor_shape": [
+        1,
+        28,
+        28
+      ],
+      "label": null
+    },
+    {
+      "source": "flatten",
+      "target": "fc1",
+      "tensor_shape": [
+        784
+      ],
+      "label": null
+    },
+    {
+      "source": "fc1",
+      "target": "dropout",
+      "tensor_shape": [
+        512
+      ],
+      "label": null
+    },
+    {
+      "source": "dropout",
+      "target": "fc2",
+      "tensor_shape": [
+        512
+      ],
+      "label": null
+    },
+    {
+      "source": "fc2",
+      "target": "fc3",
+      "tensor_shape": [
+        256
+      ],
+      "label": null
+    },
+    {
+      "source": "fc3",
+      "target": "output",
+      "tensor_shape": [
+        10
+      ],
+      "label": null
+    }
+  ],
+  "groups": [],
+  "weights": null
+}
