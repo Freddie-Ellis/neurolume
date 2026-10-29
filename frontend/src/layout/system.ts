@@ -10,6 +10,7 @@ import type { FeatureMaps, Graph, GraphGroup, GraphNode } from "../schema";
 import { layoutGraph } from "./columns";
 
 export const NETWORK_CARD = { width: 260, height: 180 };
+export const PARTS_CARD = { width: 400, height: 280 };
 export const NODE_CARD = { width: 170, height: 76 };
 export const RANK_GAP = 150;
 export const ROW_GAP = 56;
@@ -19,6 +20,8 @@ export const MAX_LINK_STRANDS = 48;
 export const STRAND_SPACING = 5;
 /** How much further out neighbours outside the current level are moved, so their links run off screen. */
 export const OUTSIDE_SHIFT = 700;
+/** Room left in the framed area beside the cards for links to and from outside. */
+const OUTSIDE_ROOM = 160;
 /** Single layers outside any network (a Keras "gap") are drawn as small panels, like a layer in the detailed view. */
 export const LAYER_CARD = { width: 170, height: 180 };
 /** Strands use at most this fraction of a card's height. */
@@ -288,14 +291,16 @@ export function layoutSystem(graph: Graph): SystemLayout {
   for (const card of cards.filter((candidate) => isOutside(candidate.node))) {
     card.x += card.node.type === "input" ? -OUTSIDE_SHIFT : OUTSIDE_SHIFT;
   }
+  // The framed area keeps some room for those links on each side that has them, so they visibly come in.
   const shown = cards.filter((card) => !isOutside(card.node));
   const framed = shown.length > 0 ? shown : cards;
+  const room = (type: "input" | "output") => (cards.some((card) => isOutside(card.node) && card.node.type === type) ? OUTSIDE_ROOM : 0);
   return {
     cards,
     links,
     bounds: {
-      left: Math.min(...framed.map((card) => card.x - card.width / 2)),
-      right: Math.max(...framed.map((card) => card.x + card.width / 2)),
+      left: Math.min(...framed.map((card) => card.x - card.width / 2)) - room("input"),
+      right: Math.max(...framed.map((card) => card.x + card.width / 2)) + room("output"),
       top: Math.max(...framed.map((card) => card.y + card.height / 2)),
       bottom: Math.min(...framed.map((card) => card.y - card.height / 2)),
     },
@@ -350,7 +355,8 @@ function networkCard(graph: Graph, group: GraphGroup, id: string): Card {
     rank: 0,
     x: 0,
     y: 0,
-    ...NETWORK_CARD,
+    // Bigger with parts, so each part's box has room for its own drawing.
+    ...(isSystem(inner) ? PARTS_CARD : NETWORK_CARD),
   };
 }
 

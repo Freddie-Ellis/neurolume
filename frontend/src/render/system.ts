@@ -32,6 +32,8 @@ const STRAND_SEGMENTS = 24;
 const STRAND_BEND = 14;
 /** Share of a link to or from outside this level over which it fades out. */
 const OUTSIDE_FADE = 0.7;
+/** How far from the shown card the chip naming an outside neighbour sits. */
+const OUTSIDE_CHIP = 80;
 
 export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: string) => void): Network {
   const root = new THREE.Group();
@@ -358,8 +360,10 @@ function buildLink(link: CardLink, theme: Theme, rankCount: number): THREE.Objec
   const outside = isOutside(link.from.node) ? link.from.node : isOutside(link.to.node) ? link.to.node : null;
   const caption = outside ? String(outside.params["context"]) : link.label ?? (link.shape.length > 0 ? shapeText(link.shape) : null);
   if (!caption) return objects;
-  const along = outside === link.from.node ? 0.85 : outside === link.to.node ? 0.15 : 0.5;
-  const point = sampleCurve(x0, link.from.y, x1, link.to.y, 20, { handle: 0.5 })[Math.round(along * 20)];
+  // A fixed distance from the shown card, since the other end is far off screen.
+  const span = Math.max(x1 - x0, 1);
+  const along = outside === link.from.node ? 1 - OUTSIDE_CHIP / span : outside === link.to.node ? OUTSIDE_CHIP / span : 0.5;
+  const point = sampleCurve(x0, link.from.y, x1, link.to.y, 40, { handle: 0.5 })[Math.round(along * 40)];
   const chip = label("link-chip", escapeHtml(caption));
   chip.position.set(point.x, point.y, 5);
   return [...objects, chip];

@@ -384,17 +384,6 @@ async function main(): Promise<void> {
 
   const open = (view: View) => stage?.show(view);
   stage.show(isSystem(graph) ? systemView(graph, open) : networkView(graph, null));
-  // TEMP: #open=a,b opens group a, then group b inside it, for headless screenshots.
-  {
-    let view: View | null = isSystem(graph) ? systemView(graph, open) : null;
-    for (const id of decodeURIComponent(location.hash.replace("#open=", "")).split(",").filter((s) => location.hash.startsWith("#open=") && s)) {
-      if (!view) break;
-      const part = subgraph(view.graph, id);
-      view = isSystem(part) ? systemView(part, open, view, id) : networkView(part, view, id);
-      stage.show(view);
-      if (view.kind !== "system") break;
-    }
-  }
 
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
