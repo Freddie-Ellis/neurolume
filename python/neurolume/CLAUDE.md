@@ -7,8 +7,8 @@
 | `__init__.py` | Public API: `show`, `show_demo`, `to_graph`, `System`, `Component`, `Graph`, `Viewer`, `SCHEMA_VERSION` |
 | `schema.py` | Pydantic models = the JSON contract. `Graph` validates that edges/groups/weights reference real ids |
 | `adapters/base.py` | `to_graph()` dispatch (Graph → as-is, System → `.to_graph()`, torch → adapter), `fold_activations()` |
-| `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, Dropout, Flatten |
-| `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling |
+| `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, Dropout, Flatten, `+`/`torch.add` → `add`, `torch.cat` → `concat`; nested groups from the module tree |
+| `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling, and after a Flatten of channels-last maps their rows are reordered to channels-first (`_rows_channels_first`), so weight indices mean the same map cell in both frameworks |
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
 | `feature_maps.py` | `feature_maps()`: a `[C, H, W]` array → `FeatureMaps` (12 most active channels first, ≤32×32, 0-255 per channel, base64) |
 | `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=)` |
@@ -42,12 +42,30 @@
   overview whenever top-level groups exist.
 - `System.to_graph()` prefixes node ids with `"<network>/"` and sets `group`;
   blocks are ungrouped `custom` nodes; links are ordinary edges (with optional
-  `label`) from a network's last `output` node to the next one's first `input`.
+  `label`) from a network's last node that feeds nothing (its `output`) to the
+  next one's first node that nothing feeds (its `input`). Using ends rather than
+  node types makes a System added to a System (`add("pipe", other_system)`)
+  link to its own end blocks, e.g. its sensor and prediction.
 - Block `notes` (schema 1.2, `GraphNode.notes`) is Markdown with `$...$` /
   `$$...$$` LaTeX, dedented with `inspect.cleandoc`; the viewer shows it in the inspector when the block is clicked.
-- torch auto-grouping (`group_submodules=None` → auto): nodes are grouped by the
-  top-level child module that owns them, when ≥2 children each hold ≥2 layers.
-  Identity of modules is matched via `named_modules()`.
+- A model that auto-groups (e.g. an autoencoder) added to a System keeps its groups one level down (`ae/encoder`, parent `ae`); the viewer opens `ae` as a nested overview.
+- torch auto-grouping (`group_submodules=None` → auto) builds a **tree**
+  (`_group_by_submodule`): every node has a scope, the qualified module it runs
+  inside (`_scope()`: a module call's parent, or for function calls such as the
+  residual `+`, the last entry of fx's `nn_module_stack`, with `@1` call suffixes
+  stripped). Top level: children holding ≥2 layers become networks when there
+  are ≥2 of them. A group with more than `NESTED_SPLIT_THRESHOLD` (8) layers and
+  ≥2 such children is split again (`layer1` → `layer1.0`, `layer1.1`; group ids
+  are qualified names). Loose layers before the first group / after the last
+  become `stem` / `head` (`_group_loose_ends`, ≥2 layers, name not taken).
+  The fx fallback uses `named_modules()` names for scopes.
+- Keras nested models (a `keras.Model` used as a layer) are opened up by
+  `_read_layers()`: their layers become nodes in a group named after the model
+  (parent = enclosing model's group); the model's inputs are mapped to what
+  feeds it and its name to its output layer, so edges pass through.
+  `_image_outputs()` recurses into nested models (feeding each one the real
+  value going into it), so their slabs get feature maps too. A nested model
+  built with `keras.Input((None, None, C))` has unknown sizes inside.
 
 ## Adding things
 

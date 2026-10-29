@@ -23,6 +23,8 @@ const MAX_ZOOM = 20;
 /** Rendering above 2x pixel density costs a lot of GPU time for detail nobody can see. */
 export const MAX_PIXEL_RATIO = 2;
 const LOW_DETAIL_ZOOM = 0.45;
+/** Below this, overview cards show only their names: their detail lines and link chips are wider than the cards. */
+const MEDIUM_DETAIL_ZOOM = 0.8;
 /** After a zoom pause ends, zoom speed eases from 0 back to full over this long. */
 const ZOOM_EASE_IN_MS = 500;
 
@@ -42,7 +44,8 @@ export class Viewer {
   private zoomPausedUntil = 0;
   /** Screen space (CSS px) at the top that fitTo keeps clear, e.g. for the title card. */
   fitInsetTop: () => number = () => 0;
-
+  /** The same at the bottom, e.g. for the depth tree. */
+  fitInsetBottom: () => number = () => 0;
   constructor(
     private readonly container: HTMLElement,
     theme: Theme,
@@ -87,14 +90,53 @@ export class Viewer {
 
   /** Centre `bounds` in the view below fitInsetTop() and zoom so they fill most of it. */
   fitTo(bounds: Bounds, margin = 0.88): void {
+    this.flight = null;
+    this.place(this.fitTarget(bounds, margin));
+  }
+
+  /**
+   * Like fitTo, but glide there over `milliseconds` (eased, zooming at an even
+   * rate on a log scale). It is a short, finite animation, so the viewer is
+   * idle again as soon as it lands. Returns the zoom it lands on.
+   */
+  flyTo(bounds: Bounds, milliseconds: number, margin = 0.88): number {
+    const from = { zoom: this.camera.zoom, x: this.camera.position.x, y: this.camera.position.y };
+    const to = this.fitTarget(bounds, margin);
+    const started = performance.now();
+    const flight = () => {
+      if (this.flight !== flight) return; // replaced by another fit or flight
+      const t = Math.min(1, (performance.now() - started) / milliseconds);
+      const eased = 1 - (1 - t) ** 3;
+      this.place({
+        zoom: from.zoom * (to.zoom / from.zoom) ** eased,
+        x: from.x + (to.x - from.x) * eased,
+        y: from.y + (to.y - from.y) * eased,
+      });
+      if (t < 1) requestAnimationFrame(flight);
+      else this.flight = null;
+    };
+    this.flight = flight;
+    requestAnimationFrame(flight);
+    return to.zoom;
+  }
+
+  private flight: (() => void) | null = null;
+
+  private fitTarget(bounds: Bounds, margin: number): { zoom: number; x: number; y: number } {
     const { width, height } = this.size();
-    const inset = Math.min(this.fitInsetTop(), height / 3);
+    const top = Math.min(this.fitInsetTop(), height / 3);
+    const bottom = Math.min(this.fitInsetBottom(), height / 4);
     const boundsWidth = Math.max(bounds.right - bounds.left, 1);
     const boundsHeight = Math.max(bounds.top - bounds.bottom, 1);
-    this.camera.zoom = clamp(Math.min(width / boundsWidth, (height - inset) / boundsHeight) * margin, MIN_ZOOM, MAX_ZOOM);
-    this.camera.position.x = (bounds.left + bounds.right) / 2;
-    // Shift the camera up by half the inset, so the bounds centre on the space below it.
-    this.camera.position.y = (bounds.top + bounds.bottom) / 2 + inset / 2 / this.camera.zoom;
+    const zoom = clamp(Math.min(width / boundsWidth, (height - top - bottom) / boundsHeight) * margin, MIN_ZOOM, MAX_ZOOM);
+    // Shift the camera so the bounds centre on the space between the insets.
+    return { zoom, x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 + (top - bottom) / 2 / zoom };
+  }
+
+  private place({ zoom, x, y }: { zoom: number; x: number; y: number }): void {
+    this.camera.zoom = zoom;
+    this.camera.position.x = x;
+    this.camera.position.y = y;
     this.camera.updateProjectionMatrix();
     this.requestRender();
   }
@@ -148,8 +190,9 @@ export class Viewer {
     this.needsRender = false;
     if (this.themeHasBloom) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
-    // Zoomed far out, secondary labels would overlap, so CSS hides them.
-    this.labelRenderer.domElement.dataset.detail = this.camera.zoom < LOW_DETAIL_ZOOM ? "low" : "full";
+    // Zoomed out, secondary labels would overlap, so CSS hides them, in two steps.
+    const zoom = this.camera.zoom;
+    this.labelRenderer.domElement.dataset.detail = zoom < LOW_DETAIL_ZOOM ? "low" : zoom < MEDIUM_DETAIL_ZOOM ? "medium" : "full";
     this.labelRenderer.render(this.scene, this.camera);
   }
 

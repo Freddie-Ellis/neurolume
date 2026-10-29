@@ -152,9 +152,129 @@ h3 {
   color: var(--text-1);
 }
 
+.band-chip svg {
+  width: 14px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Add and concat: a summing junction that edges pinch through, with a small arrow on the side the result leaves. */
+.merge-node {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--text-2);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-1);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.merge-node.is-active {
+  border-color: var(--accent);
+}
+
+.merge-node::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 3px);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--text-2);
+  transform: translateY(-50%);
+}
+
+.merge-caption {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-2);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .labels[data-detail="low"] .layer-kind,
-.labels[data-detail="low"] .band-chip {
+.labels[data-detail="low"] .band-chip,
+.labels[data-detail="low"] .merge-caption {
   display: none;
+}
+
+/* ---- Depth tree (bottom left): every level down to the current one ---- */
+
+.depth-tree {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 10px 12px 10px 4px;
+}
+
+.depth-tree[hidden] {
+  display: none;
+}
+
+.depth-tree .eyebrow {
+  margin: 0 0 4px 8px;
+}
+
+.depth-row {
+  position: relative;
+  display: block;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.depth-row {
+  cursor: pointer;
+}
+
+button.depth-row:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.12));
+  color: var(--text-1);
+}
+
+.depth-row[aria-current="true"] {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+/* An elbow from the level above, like a file tree. */
+.depth-branch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-bottom: 1px solid var(--text-2);
+  border-left: 1px solid var(--text-2);
+  vertical-align: 3px;
 }
 
 /* ---- Title card ---- */
@@ -444,8 +564,25 @@ h3 {
   text-shadow: none;
 }
 
+/* Names of the parts drawn inside a card's miniature. */
+.preview-part {
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: none;
+}
+
+.labels[data-detail="low"] .preview-part,
+.labels[data-detail="medium"] .preview-part,
 .labels[data-detail="low"] .card-footer,
-.labels[data-detail="low"] .link-chip {
+.labels[data-detail="low"] .link-chip,
+.labels[data-detail="medium"] .card-footer,
+.labels[data-detail="medium"] .link-chip,
+.labels[data-detail="medium"] .card-header .layer-kind {
   display: none;
 }
 

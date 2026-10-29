@@ -73,10 +73,12 @@ def from_torch(
     With real data, ``feature_maps`` records the output of image-like layers for
     the first example in the batch, which the viewer paints onto their slabs.
 
-    ``group_submodules`` groups layers by the top-level child module they live
-    in (``self.encoder``, ``self.decoder``), so the viewer shows each as its own
-    network in a system overview. ``None`` does this automatically when the
-    model has at least two such sub-networks.
+    ``group_submodules`` groups layers by the child module they live in
+    (``self.encoder``, ``self.decoder``), so the viewer shows each as its own
+    network in an overview. ``None`` does this automatically when the model has
+    at least two such sub-networks. Big groups are split again by their own
+    children (a ResNet's ``layer1`` into its blocks), so a large model opens as
+    a few readable parts that each open further.
     """
     if sample is None:
         raise needs_sample_error(model)
@@ -87,7 +89,7 @@ def from_torch(
     try:
         with torch.no_grad():
             try:
-                nodes, edges, modules, outputs = _trace_with_fx(model, inputs)
+                nodes, edges, modules, scopes, outputs = _trace_with_fx(model, inputs)
             except Exception as error:  # fx raises many different error types
                 warnings.warn(
                     f"torch.fx could not trace {type(model).__name__} ({error}); "
@@ -95,6 +97,7 @@ def from_torch(
                     stacklevel=3,
                 )
                 nodes, edges, modules = _walk_modules(model, inputs)
+                scopes = {node_id: _parent_name(name) for node_id, name in _module_names(model, modules).items()}
                 outputs = {}
     finally:
         model.train(was_training)
@@ -110,7 +113,7 @@ def from_torch(
 
     groups: list[GraphGroup] = []
     if group_submodules is not False:
-        nodes, groups = _group_by_submodule(model, nodes, modules, minimum=1 if group_submodules else 2)
+        nodes, groups = _group_by_submodule(nodes, scopes, minimum=1 if group_submodules else 2)
 
     weight_samples: dict[str, WeightSample] | None = None
     if weights is not None:
@@ -148,35 +151,92 @@ class _RecordingShapeProp(ShapeProp):
         return result
 
 
+# A group is split into its own sub-modules only when it holds more layers than this.
+NESTED_SPLIT_THRESHOLD = 8
+
+
 def _group_by_submodule(
-    model: nn.Module, nodes: list[GraphNode], modules: dict[str, nn.Module], *, minimum: int
+    nodes: list[GraphNode], scopes: dict[str, str], *, minimum: int
 ) -> tuple[list[GraphNode], list[GraphGroup]]:
-    """Put each layer in a group named after the top-level child module that contains it.
+    """Group layers by the child modules that contain them, as a tree.
 
-    Only children that hold at least two layers count as sub-networks; if fewer
-    than ``minimum`` are found, the graph is left ungrouped. Layers outside any
-    sub-network (and operations such as torch.cat between them) stay ungrouped.
+    ``scopes`` maps a node to the qualified name of the module it runs inside
+    ("layer1.0" for both a ResNet block's conv and its residual add). At the
+    top, children that hold at least two layers become networks; if fewer than
+    ``minimum`` are found, the graph is left ungrouped. A group with more than
+    NESTED_SPLIT_THRESHOLD layers and two or more such children of its own is
+    split again, one level down. Layers outside every group stay ungrouped.
     """
-    qualified_names = {id(module): name for name, module in model.named_modules() if name}
-    owner: dict[str, str] = {}
-    for node in nodes:
-        module = modules.get(node.id)
-        name = qualified_names.get(id(module)) if module is not None else None
-        if name and "." in name:
-            owner[node.id] = name.split(".")[0]
+    paths = {node.id: scopes[node.id].split(".") if scopes.get(node.id) else [] for node in nodes}
+    groups: list[GraphGroup] = []
+    group_of: dict[str, str] = {}
 
-    layer_counts = Counter(owner.values())
-    networks = [child for child, count in layer_counts.items() if count >= 2]
-    if len(networks) < minimum:
-        return nodes, []
+    def split(members: list[str], depth: int, parent: str | None) -> None:
+        counts = Counter(paths[node_id][depth] for node_id in members if len(paths[node_id]) > depth)
+        parts = [part for part, count in counts.items() if count >= 2]
+        if depth == 0 and len(parts) < minimum:
+            return
+        if depth > 0 and (len(parts) < 2 or len(members) <= NESTED_SPLIT_THRESHOLD):
+            return
+        for part in parts:
+            inside = [node_id for node_id in members if len(paths[node_id]) > depth and paths[node_id][depth] == part]
+            group_id = ".".join(paths[inside[0]][: depth + 1])
+            groups.append(GraphGroup(id=group_id, label=group_id, parent=parent, framework="pytorch"))
+            group_of.update(dict.fromkeys(inside, group_id))
+            split(inside, depth + 1, group_id)
 
-    grouped = [node.model_copy(update={"group": owner[node.id]}) if owner.get(node.id) in networks else node for node in nodes]
-    return grouped, [GraphGroup(id=child, label=child, framework="pytorch") for child in networks]
+    split([node.id for node in nodes], 0, None)
+    if groups:
+        _group_loose_ends(nodes, group_of, groups)
+    grouped = [node.model_copy(update={"group": group_of[node.id]}) if node.id in group_of else node for node in nodes]
+    return grouped, groups
+
+
+def _group_loose_ends(nodes: list[GraphNode], group_of: dict[str, str], groups: list[GraphGroup]) -> None:
+    """Gather the loose layers before the first network and after the last one
+    into a "stem" and a "head" (a ResNet's first conv and pool, its final pool
+    and classifier), so the overview shows a few parts instead of a row of
+    single-layer cards. A lone layer stays as it is."""
+    layers = [node for node in nodes if node.type not in ("input", "output")]
+    grouped = [i for i, node in enumerate(layers) if node.id in group_of]
+    taken = {group.id for group in groups}
+    for name, run in (("stem", layers[: grouped[0]]), ("head", layers[grouped[-1] + 1 :])):
+        if len(run) < 2 or name in taken or any(node.id in group_of for node in run):
+            continue
+        groups.insert(0 if name == "stem" else len(groups), GraphGroup(id=name, label=name, framework="pytorch"))
+        group_of.update(dict.fromkeys((node.id for node in run), name))
+
+
+def _scope(fx_node: fx.Node) -> str:
+    """Qualified name of the module a node runs inside ("" for the model itself).
+
+    A module call lives in its parent ("layer1.0" for "layer1.0.conv1"); a
+    function call such as the residual ``+`` lives in the module whose forward
+    made it, which fx records in ``nn_module_stack``.
+    """
+    if fx_node.op == "call_module":
+        return _parent_name(str(fx_node.target))
+    stack = fx_node.meta.get("nn_module_stack") or {}
+    if not stack:
+        return ""
+    key, value = list(stack.items())[-1]
+    name = value[0] if isinstance(value, tuple) else key
+    return str(name).split("@")[0]  # "layer1.0.relu@1" is the module's second call
+
+
+def _parent_name(name: str) -> str:
+    return name.rpartition(".")[0]
+
+
+def _module_names(model: nn.Module, modules: dict[str, nn.Module]) -> dict[str, str]:
+    """Qualified module name of each node that wraps a module."""
+    names = {id(module): name for name, module in model.named_modules() if name}
+    return {node_id: names[id(module)] for node_id, module in modules.items() if id(module) in names}
 
 
 def _trace_with_fx(
     model: nn.Module, inputs: tuple[Any, ...]
-) -> tuple[list[GraphNode], list[GraphEdge], dict[str, nn.Module], dict[str, torch.Tensor]]:
+) -> tuple[list[GraphNode], list[GraphEdge], dict[str, nn.Module], dict[str, str], dict[str, torch.Tensor]]:
     traced = fx.symbolic_trace(model)
     recorder = _RecordingShapeProp(traced)
     if inputs:
@@ -185,6 +245,7 @@ def _trace_with_fx(
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
     modules: dict[str, nn.Module] = {}
+    scopes: dict[str, str] = {}  # graph node id -> module it runs inside
     ids: dict[str, str] = {}  # fx node name -> graph node id
     placeholders = [fx_node for fx_node in traced.graph.nodes if fx_node.op == "placeholder"]
 
@@ -226,12 +287,13 @@ def _trace_with_fx(
             )
 
         nodes.append(node)
+        scopes[node_id] = _scope(fx_node)
         edges.extend(
             GraphEdge(source=ids[source.name], target=node_id, tensor_shape=_shape_of(source)) for source in sources
         )
 
     outputs = {ids[name]: output for name, output in recorder.outputs.items() if name in ids}
-    return nodes, edges, modules, outputs
+    return nodes, edges, modules, scopes, outputs
 
 
 def _walk_modules(

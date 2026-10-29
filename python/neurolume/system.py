@@ -145,19 +145,24 @@ class System:
             raise ValueError(f"a component called {name!r} already exists")
 
     def _exit_node(self, component: Component) -> GraphNode:
-        """The node whose output leaves a component: a network's output, or the block itself."""
+        """The node whose output leaves a component: the block itself, or the last
+        node of a network that feeds nothing else (its output, or for a System
+        added as a network, its last end, such as a prediction block)."""
         if component.name in self._blocks:
             return self._blocks[component.name]
         graph = self._networks[component.name]
-        outputs = [node for node in graph.nodes if node.type == "output"]
-        node = outputs[-1] if outputs else graph.nodes[-1]
+        feeds = {edge.source for edge in graph.edges}
+        ends = [node for node in graph.nodes if node.id not in feeds]
+        node = ends[-1] if ends else graph.nodes[-1]
         return node.model_copy(update={"id": f"{component.name}{SEPARATOR}{node.id}"})
 
     def _entry_node(self, component: Component) -> GraphNode:
-        """The node that receives input: a network's (first) input, or the block itself."""
+        """The node that receives input: the block itself, or the first node of a
+        network that nothing feeds (its input, or for a System, its first source)."""
         if component.name in self._blocks:
             return self._blocks[component.name]
         graph = self._networks[component.name]
-        inputs = [node for node in graph.nodes if node.type == "input"]
-        node = inputs[0] if inputs else graph.nodes[0]
+        fed = {edge.target for edge in graph.edges}
+        starts = [node for node in graph.nodes if node.id not in fed]
+        node = starts[0] if starts else graph.nodes[0]
         return node.model_copy(update={"id": f"{component.name}{SEPARATOR}{node.id}"})

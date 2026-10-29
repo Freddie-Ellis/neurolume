@@ -88,6 +88,58 @@ describe("layoutGraph", () => {
       ["input", "fc1", 0],
       ["fc1", "fc2", 1],
     ]);
+    expect(layout.arcs).toEqual([]); // a graph without edges is a plain chain
+  });
+});
+
+describe("branching graphs", () => {
+  const edge = (source: string, target: string) => ({ source, target, tensor_shape: [8], label: null });
+  // A residual block with a projection: input -> fc1 -> fc2 -> add, and input -> proj -> add.
+  const residual: Graph = {
+    ...mlp,
+    nodes: [
+      node("input", "input", [8]),
+      node("fc1", "dense", [8], [8]),
+      node("fc2", "dense", [8], [8]),
+      node("proj", "dense", [8], [8]),
+      node("add", "add", [8], [8]),
+      node("output", "output", [8], [8]),
+    ],
+    edges: [edge("input", "fc1"), edge("fc1", "fc2"), edge("input", "proj"), edge("fc2", "add"), edge("proj", "add"), edge("add", "output")],
+  };
+  const layout = layoutGraph(residual);
+
+  it("links neighbouring columns only where the signal flows between them", () => {
+    expect(layout.links.map((l) => [l.from.node.id, l.to.node.id])).toEqual([
+      ["input", "fc1"],
+      ["fc1", "fc2"],
+    ]); // fc2 does not feed proj, so they are not linked
+  });
+
+  it("draws every other edge as an arc under the panels, into the add", () => {
+    expect(layout.arcs.map((a) => [a.source.id, a.target.id])).toEqual([
+      ["input", "proj"],
+      ["fc2", "add"],
+    ]);
+    const panelBottom = Math.min(...layout.columns.map((c) => c.panel.bottom));
+    for (const arc of layout.arcs) expect(arc.laneY).toBeLessThan(panelBottom);
+    expect(layout.bounds.bottom).toBeLessThan(Math.min(...layout.arcs.map((a) => a.laneY)));
+  });
+
+  it("makes add a merge point, and converges a column's otherwise loose output on it", () => {
+    expect(layout.bands.find((b) => b.node.id === "add")?.kind).toBe("merge");
+    // proj feeds the add, but no column follows it: its edges converge on the add.
+    expect(layout.stubs.map((s) => [s.from.node.id, s.to.node.id])).toEqual([["proj", "add"]]);
+    // The arc into the add starts at fc2's neurons and ends at the add's node.
+    const intoAdd = layout.arcs.find((a) => a.target.id === "add")!;
+    expect("column" in intoAdd.start && intoAdd.start.column.node.id).toBe("fc2");
+    expect("band" in intoAdd.end && intoAdd.end.band.node.id).toBe("add");
+  });
+
+  it("gives overlapping arcs separate lanes, the shorter one nearer the panels", () => {
+    const [long, short] = layout.arcs; // input -> proj spans further than fc2 -> add, and they overlap
+    expect(Math.abs(long.x1 - long.x0)).toBeGreaterThan(Math.abs(short.x1 - short.x0));
+    expect(short.laneY).toBeGreaterThan(long.laneY);
   });
 });
 

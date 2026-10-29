@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Graph, GraphNode } from "../schema";
-import { MAX_LINK_STRANDS, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
+import { MAX_LINK_STRANDS, isOutside, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
 
 function node(id: string, type: GraphNode["type"], group: string | null, output_shape: number[], input_shape: number[] = []): GraphNode {
   return { id, type, label: id, group, input_shape, output_shape, params: {}, param_count: 10, activation: null, notes: null };
@@ -66,7 +66,11 @@ describe("layoutSystem", () => {
     const encoder = card("group:enc");
     expect(encoder.paramCount).toBe(30);
     expect(encoder.layerCount).toBe(1);
-    expect(encoder.preview).toEqual([8, 4]);
+    expect(encoder.miniature.items).toEqual([
+      { kind: "neurons", x: 0, units: 8 },
+      { kind: "neurons", x: 1, units: 4 },
+    ]);
+    expect(encoder.miniature.links).toEqual([[0, 1]]);
   });
 });
 
@@ -80,6 +84,46 @@ describe("subgraph", () => {
 
   it("keeps a group's own input and output", () => {
     expect(subgraph(system, "enc").nodes.map((n) => n.id)).toEqual(["enc/in", "enc/fc", "enc/out"]);
+  });
+
+  it("opens a network with parts of its own as another overview", () => {
+    // An autoencoder added to a System: ae holds ae/encoder and ae/decoder.
+    const nested: Graph = {
+      ...system,
+      nodes: [
+        node("ae/input", "input", "ae", [8]),
+        node("ae/enc", "dense", "ae/encoder", [4], [8]),
+        node("ae/dec", "dense", "ae/decoder", [8], [4]),
+        node("ae/output", "output", "ae", [8], [8]),
+      ],
+      edges: [edge("ae/input", "ae/enc"), edge("ae/enc", "ae/dec"), edge("ae/dec", "ae/output")],
+      groups: [
+        { id: "ae", label: "Autoencoder", parent: null, collapsed: false, framework: "pytorch" },
+        { id: "ae/encoder", label: "encoder", parent: "ae", collapsed: false, framework: null },
+        { id: "ae/decoder", label: "decoder", parent: "ae", collapsed: false, framework: null },
+      ],
+    };
+    const autoencoder = subgraph(nested, "ae");
+    expect(isSystem(autoencoder)).toBe(true);
+    expect(layoutSystem(autoencoder).cards.map((c) => c.id)).toEqual(["node:ae/input", "group:ae/encoder", "group:ae/decoder", "node:ae/output"]);
+    // One level further down is a plain network.
+    expect(isSystem(subgraph(autoencoder, "ae/encoder"))).toBe(false);
+  });
+
+  it("keeps a block's skip connection, from its new input to its add", () => {
+    // A ResNet block: the add reads both the block's last conv and the layer before the block.
+    const maps = { channels: [0], height: 1, width: 1, data: "AA==" };
+    const resnet: Graph = {
+      ...system,
+      nodes: [node("pool", "pool", null, [4, 2, 2]), node("block_conv", "conv2d", "block", [4, 2, 2], [4, 2, 2]), node("block_add", "add", "block", [4, 2, 2], [4, 2, 2])],
+      edges: [edge("pool", "block_conv"), edge("block_conv", "block_add"), edge("pool", "block_add")],
+      groups: [{ id: "block", label: "block", parent: null, collapsed: false, framework: "pytorch" }],
+      feature_maps: { pool: maps },
+    };
+    const block = subgraph(resnet, "block");
+    const input = block.nodes[0];
+    expect(block.edges.map((e) => [e.source, e.target])).toContainEqual([input.id, "block_add"]);
+    expect(block.feature_maps?.[input.id]).toEqual(maps); // the input shows what the pool recorded
   });
 });
 
@@ -98,5 +142,59 @@ describe("strands", () => {
     expect((slots[0] + slots[slots.length - 1]) / 2).toBeCloseTo(card.y);
     expect(slots[0] - slots[slots.length - 1]).toBeLessThan(card.height);
     expect(strandSlots(1, card)).toEqual([card.y]);
+  });
+});
+
+describe("what an opened card shows of its surroundings", () => {
+  // The fault-detector case: an outside block feeds a block inside a system that was added as one part.
+  const nested: Graph = {
+    ...system,
+    nodes: [
+      node("bus", "custom", null, [8]),
+      { ...node("det/sensor", "custom", "det", [8]), label: "Sensor" },
+      node("det/enc/in", "input", "det/enc", [8]),
+      node("det/enc/fc", "dense", "det/enc", [4], [8]),
+      node("det/enc/out", "output", "det/enc", [4], [4]),
+      { ...node("alarm", "custom", null, [], [4]), label: "Alarm" },
+    ],
+    edges: [edge("bus", "det/sensor"), edge("det/sensor", "det/enc/in"), edge("det/enc/in", "det/enc/fc"), edge("det/enc/fc", "det/enc/out"), edge("det/enc/out", "alarm")],
+    groups: [
+      { id: "det", label: "Fault detector", parent: null, collapsed: false, framework: "pytorch" },
+      { id: "det/enc", label: "Encoder", parent: "det", collapsed: false, framework: "pytorch" },
+    ],
+  };
+  nested.nodes[0].label = "Sensor bus";
+  const detector = subgraph(nested, "det");
+
+  it("keeps what feeds the group, as an outside node named as it is one level up", () => {
+    const from = detector.nodes.find((n) => n.params["contextName"] === "Sensor bus")!;
+    expect(isOutside(from)).toBe(true);
+    expect(detector.edges.map((e) => [e.source, e.target])).toContainEqual([from.id, "det/sensor"]);
+    // The alarm is fed by the encoder's own output node, so that node says where it goes.
+    const to = detector.nodes.find((n) => n.params["contextName"] === "Alarm")!;
+    expect(to.id).toBe("det/enc/out");
+    expect(to.params["context"]).toBe("to Alarm");
+  });
+
+  it("labels the group's own input instead, when that is what the outside feeds", () => {
+    const encoder = subgraph(detector, "det/enc");
+    const input = encoder.nodes.find((n) => n.id === "det/enc/in")!;
+    expect(input.params["context"]).toBe("from Sensor");
+    expect(encoder.nodes.filter((n) => n.type === "input")).toHaveLength(1);
+  });
+
+  it("previews a card with parts as its parts, without the inputs and neighbours", () => {
+    const card = layoutSystem(nested).cards.find((c) => c.id === "group:det")!;
+    expect(card.miniature.items.map((item) => (item.kind === "box" ? item.label : item.kind))).toEqual(["Sensor", "Encoder"]);
+    // Each part carries its own miniature, so the preview can draw what is inside it too.
+    const encoder = card.miniature.items[1];
+    expect(encoder.kind === "box" && encoder.inner.items.map((item) => item.kind)).toEqual(["neurons", "neurons"]);
+  });
+
+  it("moves outside neighbours off the framed area, so their links run off screen", () => {
+    const layout = layoutSystem(detector);
+    const from = layout.cards.find((c) => isOutside(c.node))!;
+    expect(from.x + from.width / 2).toBeLessThan(layout.bounds.left);
+    expect(layout.links.some((link) => link.from === from)).toBe(true);
   });
 });

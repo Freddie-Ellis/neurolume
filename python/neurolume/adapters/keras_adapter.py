@@ -9,6 +9,10 @@ either framework produces an equivalent Graph.
 Keras stores images channels-last, (height, width, channels); the schema uses
 channels-first, (channels, height, width), like PyTorch. Shapes are converted
 here, so the frontend never needs to know which framework a model came from.
+
+A model used as a layer inside another model (an encoder, a backbone) is
+opened up: its layers become nodes in a group named after it, so the viewer
+shows it as its own network that opens to its layers.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import keras
 import numpy as np
 
 from ..feature_maps import feature_maps as encode_feature_maps
-from ..schema import FeatureMaps, Graph, GraphEdge, GraphNode, ModelInfo, NodeType, WeightSample
+from ..schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
 from ..weights import DEFAULT_K, SampleMode, sample_dense
 from .base import carry_through_folds, fold_activations, is_shape
 
@@ -73,14 +77,10 @@ def from_keras(
         ids[name] = "input" if len(model.inputs) == 1 else f"input_{index}"
         nodes.append(GraphNode(id=ids[name], type="input", label="Input", output_shape=_shape(tensor.shape, channels_last)))
 
-    layers = [layer for layer in model.layers if type(layer).__name__ != "InputLayer"]
-    for layer in layers:
-        ids[layer.name] = layer.name
-    for layer in layers:
-        sources = [ids[name] for name in _inbound_layers(layer) if name in ids]
-        input_shape = _shape(_input_shape(layer), channels_last)
-        nodes.append(_layer_node(layer, input_shape, _shape(layer.output.shape, channels_last)))
-        edges.extend(GraphEdge(source=source, target=layer.name, tensor_shape=input_shape) for source in sources)
+    groups: list[GraphGroup] = []
+    leaves: list[keras.layers.Layer] = []  # every layer that became a node, nested ones too
+    _read_layers(model, None, channels_last, ids, nodes, edges, groups, leaves)
+    layers = _own_layers(model)
 
     for index, tensor in enumerate(model.outputs):
         node_id = "output" if len(model.outputs) == 1 else f"output_{index}"
@@ -90,7 +90,7 @@ def from_keras(
 
     outputs: dict[str, np.ndarray] = {}
     if feature_maps and real_data:
-        outputs = _image_outputs(model, layers, channels_last, sample)
+        outputs = _image_outputs(model, channels_last, sample if isinstance(sample, (list, tuple)) else [sample])
         example = np.asarray(keras.ops.convert_to_numpy(sample))
         if len(model.inputs) == 1 and example.ndim == 4:  # the input image itself
             outputs[nodes[0].id] = _channels_first(example[0], channels_last)
@@ -104,38 +104,113 @@ def from_keras(
 
     weight_samples: dict[str, WeightSample] | None = None
     if weights is not None:
-        by_name = {layer.name: layer for layer in layers}
-        weight_samples = {
+        by_name = {layer.name: layer for layer in leaves}
+        weight_samples = {}
+        for node in nodes:
+            if node.type != "dense" or node.id not in by_name:
+                continue
+            kernel = keras.ops.convert_to_numpy(by_name[node.id].kernel)
+            flattened = _flattened_image_shape(node, nodes, edges)
+            if flattened is not None and channels_last:
+                kernel = _rows_channels_first(kernel, flattened)
             # Keras stores dense kernels as (in, out); sample_dense expects PyTorch's (out, in).
-            node.id: sample_dense(keras.ops.convert_to_numpy(by_name[node.id].kernel).T, k=weight_k, mode=weights)
-            for node in nodes
-            if node.type == "dense" and node.id in by_name
-        }
+            weight_samples[node.id] = sample_dense(kernel.T, k=weight_k, mode=weights)
 
     return Graph(
         model=ModelInfo(name=model.name, framework="keras", total_params=sum(_param_count(layer) for layer in layers)),
         nodes=nodes,
         edges=edges,
+        groups=groups,
         weights=weight_samples or None,
         feature_maps=maps or None,
     )
 
 
-def _image_outputs(
-    model: keras.Model, layers: list[keras.layers.Layer], channels_last: bool, sample: Any
-) -> dict[str, np.ndarray]:
-    """Each image-like layer's output for the first example, as [channels, height, width] arrays."""
-    wanted = [layer for layer in layers if len(layer.output.shape) == 4]  # [batch, height, width, channels]
-    if not wanted:
+def _own_layers(model: keras.Model) -> list[keras.layers.Layer]:
+    return [layer for layer in model.layers if type(layer).__name__ != "InputLayer"]
+
+
+def _read_layers(
+    model: keras.Model,
+    group: str | None,
+    channels_last: bool,
+    ids: dict[str, str],
+    nodes: list[GraphNode],
+    edges: list[GraphEdge],
+    groups: list[GraphGroup],
+    leaves: list[keras.layers.Layer],
+) -> None:
+    """Turn a model's layers into nodes and edges, opening up nested models.
+
+    ``ids`` maps a Keras layer name to the node that carries its output. A
+    nested model's inputs are mapped to whatever feeds it in the outer model,
+    and its own name to its output layer, so edges pass straight through it.
+    """
+    for layer in _own_layers(model):
+        sources = [ids[name] for name in _inbound_layers(layer) if name in ids]
+        if isinstance(layer, keras.Model):
+            groups.append(GraphGroup(id=layer.name, label=layer.name, parent=group, framework="keras"))
+            for tensor, source in zip(layer.inputs, sources):
+                ids[tensor._keras_history.operation.name] = source
+            _read_layers(layer, layer.name, channels_last, ids, nodes, edges, groups, leaves)
+            ids[layer.name] = ids[layer.outputs[0]._keras_history.operation.name]
+            continue
+        ids[layer.name] = layer.name
+        leaves.append(layer)
+        input_shape = _shape(_input_shape(layer), channels_last)
+        node = _layer_node(layer, input_shape, _shape(layer.output.shape, channels_last))
+        nodes.append(node.model_copy(update={"group": group}))
+        edges.extend(GraphEdge(source=source, target=layer.name, tensor_shape=input_shape) for source in sources)
+
+
+def _flattened_image_shape(node: GraphNode, nodes: list[GraphNode], edges: list[GraphEdge]) -> list[int] | None:
+    """The [channels, height, width] shape a dense layer reads through a Flatten, if it does."""
+    by_id = {candidate.id: candidate for candidate in nodes}
+    current = node
+    while True:
+        sources = [edge.source for edge in edges if edge.target == current.id]
+        if len(sources) != 1:
+            return None
+        current = by_id[sources[0]]
+        if current.type == "flatten":
+            return current.input_shape if len(current.input_shape) == 3 else None
+        if current.type not in ("dropout", "activation"):  # layers that pass values through unchanged
+            return None
+
+
+def _rows_channels_first(kernel: np.ndarray, shape: list[int]) -> np.ndarray:
+    """Reorder a dense kernel's input rows from Keras's (height, width, channels)
+    flattening to the (channels, height, width) order the schema uses, so input
+    index i means the same map cell in both frameworks."""
+    channels, height, width = shape
+    units = kernel.shape[1]
+    return kernel.reshape(height, width, channels, units).transpose(2, 0, 1, 3).reshape(channels * height * width, units)
+
+
+def _image_outputs(model: keras.Model, channels_last: bool, inputs: list[Any]) -> dict[str, np.ndarray]:
+    """Each image-like layer's output for the first example, as [channels, height, width] arrays.
+
+    A second model over the same layers returns every image-like output at once,
+    plus the value going into each nested model, which is then probed the same
+    way with that value as its input.
+    """
+    own = _own_layers(model)
+    wanted = [layer for layer in own if not isinstance(layer, keras.Model) and len(layer.output.shape) == 4]
+    nested = [layer for layer in own if isinstance(layer, keras.Model) and len(layer.inputs) == 1 and layer._inbound_nodes]
+    feeds = [layer._inbound_nodes[0].input_tensors[0] for layer in nested]
+    if not wanted and not nested:
         return {}
-    # A second model over the same layers that returns every image-like output at once.
-    probe = keras.Model(model.inputs, [layer.output for layer in wanted])
-    values = probe(sample if isinstance(sample, (list, tuple)) else [sample])
-    values = values if isinstance(values, (list, tuple)) else [values]
-    return {
+    probe = keras.Model(model.inputs, [layer.output for layer in wanted] + feeds)
+    values = probe(inputs)
+    values = list(values) if isinstance(values, (list, tuple)) else [values]
+
+    outputs = {
         layer.name: _channels_first(keras.ops.convert_to_numpy(value)[0], channels_last)
         for layer, value in zip(wanted, values)
     }
+    for layer, value in zip(nested, values[len(wanted) :]):
+        outputs.update(_image_outputs(layer, channels_last, [value]))
+    return outputs
 
 
 def _channels_first(image: np.ndarray, channels_last: bool) -> np.ndarray:
