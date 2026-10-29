@@ -40,6 +40,8 @@ export class Viewer {
   onUserZoom: ((zoom: number, clientX: number, clientY: number) => void) | null = null;
   /** Scroll zooming is ignored until this time (performance.now() ms), then eases back in. */
   private zoomPausedUntil = 0;
+  /** Screen space (CSS px) at the top that fitTo keeps clear, e.g. for the title card. */
+  fitInsetTop: () => number = () => 0;
 
   constructor(
     private readonly container: HTMLElement,
@@ -83,14 +85,16 @@ export class Viewer {
     this.requestRender();
   }
 
-  /** Centre the camera on `bounds` and zoom so they fill most of the view. */
+  /** Centre `bounds` in the view below fitInsetTop() and zoom so they fill most of it. */
   fitTo(bounds: Bounds, margin = 0.88): void {
     const { width, height } = this.size();
+    const inset = Math.min(this.fitInsetTop(), height / 3);
     const boundsWidth = Math.max(bounds.right - bounds.left, 1);
     const boundsHeight = Math.max(bounds.top - bounds.bottom, 1);
-    this.camera.zoom = clamp(Math.min(width / boundsWidth, height / boundsHeight) * margin, MIN_ZOOM, MAX_ZOOM);
+    this.camera.zoom = clamp(Math.min(width / boundsWidth, (height - inset) / boundsHeight) * margin, MIN_ZOOM, MAX_ZOOM);
     this.camera.position.x = (bounds.left + bounds.right) / 2;
-    this.camera.position.y = (bounds.top + bounds.bottom) / 2;
+    // Shift the camera up by half the inset, so the bounds centre on the space below it.
+    this.camera.position.y = (bounds.top + bounds.bottom) / 2 + inset / 2 / this.camera.zoom;
     this.camera.updateProjectionMatrix();
     this.requestRender();
   }

@@ -19,7 +19,7 @@ SNAPSHOTS = Path(__file__).parent / "snapshots"
 
 def _mlp_graph():
     torch.manual_seed(0)
-    return to_graph(MLP(), torch.randn(1, 1, 28, 28), weights=None)
+    return to_graph(MLP(), torch.randn(1, 1, 28, 28), weights=None, feature_maps=False)
 
 
 def test_mlp_shapes_and_parameter_counts() -> None:
@@ -119,3 +119,39 @@ def test_padding_that_is_not_same_stays_explicit() -> None:
     graph = to_graph(nn.Sequential(nn.Conv2d(3, 8, 3, stride=2, padding=1)), torch.randn(1, 3, 32, 32))
     conv = next(node for node in graph.nodes if node.type == "conv2d")
     assert (conv.params["padding"], conv.output_shape) == ([1, 1], [8, 16, 16])
+
+
+def test_feature_maps_are_recorded_after_folded_activations() -> None:
+    import base64
+
+    from cnn import LeNet
+    from neurolume.demo import sample_digit
+
+    torch.manual_seed(0)
+    digit = torch.from_numpy(sample_digit()).reshape(1, 1, 28, 28)
+    maps = to_graph(LeNet(), digit, weights=None).feature_maps
+    assert maps is not None
+    assert set(maps) == {"input", "conv1", "pool1", "conv2", "norm2", "pool2"}
+    assert (sorted(maps["conv1"].channels), maps["conv1"].height, maps["conv1"].width) == (list(range(6)), 28, 28)
+    assert (len(maps["pool2"].channels), maps["pool2"].height) == (12, 5)  # 16 channels, capped at 12
+
+    # conv1's ReLU is folded into it, so its maps are taken after the ReLU: the
+    # darkest value is exactly zero, which maps to 0 and stays common.
+    pixels = base64.b64decode(maps["conv1"].data)
+    assert len(pixels) == 6 * 28 * 28
+    assert pixels.count(0) > len(pixels) // 10
+
+
+def test_a_shape_is_enough_to_measure_a_model() -> None:
+    from cnn import LeNet
+
+    from_shape = to_graph(LeNet(), (1, 28, 28), weights=None)
+    from_size = to_graph(LeNet(), torch.Size([1, 28, 28]), weights=None)
+    from_data = to_graph(LeNet(), torch.randn(1, 1, 28, 28), weights=None, feature_maps=False)
+    assert from_shape.nodes == from_size.nodes == from_data.nodes
+    assert from_shape.feature_maps is None  # made-up zeros would only give blank pictures
+
+
+def test_missing_sample_explains_what_to_pass() -> None:
+    with pytest.raises(ValueError, match=r"shape of one input .* \(1, 28, 28\)"):
+        to_graph(MLP())

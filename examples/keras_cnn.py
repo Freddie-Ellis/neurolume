@@ -4,8 +4,9 @@ Keras 3 can run on PyTorch, TensorFlow or JAX. TensorFlow has no wheels for
 Python 3.14 yet, so this example uses the PyTorch backend unless KERAS_BACKEND
 is already set. The backend must be chosen before Keras is imported.
 
-A Keras model that starts with `keras.Input` knows its shapes, so no example
-input is needed.
+A Keras model that starts with `keras.Input` knows its shapes, so
+`neurolume.show(model)` is enough. Passing real data as well (here a drawn
+"7") paints each feature-map slab with that layer's output.
 """
 
 import os
@@ -16,6 +17,7 @@ import keras  # noqa: E402
 from keras import layers  # noqa: E402
 
 import neurolume  # noqa: E402
+from neurolume.demo import sample_digit  # noqa: E402
 
 
 def build_lenet() -> keras.Model:
@@ -39,4 +41,6 @@ def build_lenet() -> keras.Model:
 
 
 if __name__ == "__main__":
-    neurolume.show(build_lenet())
+    keras.utils.set_random_seed(0)
+    digit = sample_digit().reshape(1, 28, 28, 1)  # Keras is channels-last: batch, height, width, channels
+    neurolume.show(build_lenet(), digit)

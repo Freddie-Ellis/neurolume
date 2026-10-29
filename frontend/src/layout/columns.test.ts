@@ -28,6 +28,7 @@ const mlp: Graph = {
   edges: [],
   groups: [],
   weights: null,
+  feature_maps: null,
 };
 
 describe("unitCount", () => {

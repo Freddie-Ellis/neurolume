@@ -20,7 +20,7 @@ Real systems are rarely one network, so Neurolume also draws **systems**: severa
 ```python
 import neurolume
 
-neurolume.show(model, example_input)           # opens the browser viewer
+neurolume.show(model, (1, 28, 28))             # opens the browser viewer; sample = input shape or real data
 
 system = neurolume.System("Pipeline")          # several networks in one schematic
 system.add("encoder", encoder, x)
@@ -28,7 +28,7 @@ system.add("decoder", decoder, z)
 system.connect("encoder", "decoder", label="latent")
 neurolume.show(system)
 
-neurolume.export_html(model, example_input, "model.html")  # standalone file (Phase 4)
+neurolume.export_html(model, sample, "model.html")  # standalone file (Phase 4)
 ```
 
 **Success criteria for v1**
@@ -57,7 +57,7 @@ Everything hinges on one framework-agnostic JSON graph schema: adapters produce 
 
 **Components**
 
-1. **Adapters (Python).** Convert a live model plus an example input into the graph schema.
+1. **Adapters (Python).** Convert a live model plus a `sample` (the shape of one input, or real data) into the graph schema. Real data also yields feature maps.
    - PyTorch (done): trace with `torch.fx` and `ShapeProp` for topology and real tensor shapes. Fallback when tracing fails (dynamic control flow): run the input once with forward hooks on leaf modules and assume a sequential graph, with a warning. A model whose top-level children are themselves networks (e.g. `self.encoder`, `self.decoder`) is split into one group per child automatically.
    - Keras: read `model.layers`, `layer.get_config()`, inbound nodes for connectivity, and output shapes.
    - Optional later: an ONNX adapter as a universal fallback, with op-grouping to hide low-level noise.
@@ -111,7 +111,7 @@ The schema is the contract between Python and the frontend; it is versioned and 
 - `weights` is optional and sampled; never ship full weight matrices. `pairs` are `[from_index, to_index, value]`.
 - Standalone activation modules (e.g. `nn.ReLU`) are folded into the previous layer's `activation` field by default (`fold_activations_into_layers=False` keeps them).
 
-**Changes:** 1.0 → 1.1 added `GraphEdge.label` and `GraphGroup.framework` for systems.
+**Changes:** 1.0 → 1.1 added `GraphEdge.label` and `GraphGroup.framework` for systems; 1.2 added `GraphNode.notes` (Markdown for System blocks); 1.3 added `Graph.feature_maps`: small images of each image-like layer's real output for a real-data sample, painted onto its slabs.
 
 ## 4. Tech stack and repo structure
 

@@ -116,7 +116,7 @@ class Viewer:
 
 def show(
     model: Any = None,
-    example_input: Any = None,
+    sample: Any = None,
     *,
     port: int | None = None,
     open_browser: bool = True,
@@ -125,11 +125,17 @@ def show(
 ) -> Viewer:
     """Visualise a model (or a ready-made Graph) in the browser.
 
+    ``sample`` tells Neurolume what goes into the model, so it can measure each
+    layer: the shape of one input without the batch dimension, like
+    ``keras.Input`` (``show(model, (1, 28, 28))``), or real data such as an
+    image batch, which also draws what each convolution outputs. PyTorch models
+    need one; Keras models that start with ``keras.Input`` don't.
+
     The server runs on a background thread. By default ``show`` blocks until
     Ctrl+C when run as a script, and returns immediately in an interactive
     session such as a REPL or notebook. Pass ``block`` to override this.
     """
-    graph = demo_graph() if model is None else to_graph(model, example_input, **adapter_options)
+    graph = demo_graph() if model is None else to_graph(model, sample, **adapter_options)
     app = create_app(graph)
     port = port or _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
@@ -162,12 +168,12 @@ def show_demo() -> None:
     try:
         from .demo import demo_input, demo_model
 
-        model, example_input = demo_model(), demo_input()
+        model, sample = demo_model(), demo_input()
     except ImportError:
         print("torch is not installed, so the demo uses a ready-made graph. For the live model: pip install neurolume[torch]")
         show(block=True)
         return
-    show(model, example_input, block=True)
+    show(model, sample, block=True)
 
 
 def _free_port() -> int:

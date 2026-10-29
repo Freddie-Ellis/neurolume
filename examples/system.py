@@ -43,9 +43,10 @@ def build_system() -> neurolume.System:
             | Current | 8 | A |
         """,
     )
-    encoder = system.add("encoder", mlp(32, 64, 64, 16), torch.randn(1, 32), label="Encoder")
-    decoder = system.add("decoder", mlp(16, 64, 64, 32), torch.randn(1, 16), label="Decoder")
-    classifier = system.add("classifier", mlp(16, 12, 3), torch.randn(1, 16), label="Classifier")
+    # The second argument is the shape of one input to each network.
+    encoder = system.add("encoder", mlp(32, 64, 64, 16), (32,), label="Encoder")
+    decoder = system.add("decoder", mlp(16, 64, 64, 32), (16,), label="Decoder")
+    classifier = system.add("classifier", mlp(16, 12, 3), (16,), label="Classifier")
     loss = system.block(
         "loss",
         label="Reconstruction loss",

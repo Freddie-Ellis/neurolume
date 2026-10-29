@@ -7,7 +7,8 @@
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { type BandLayout, type ColumnLayout, type Layout, isBand } from "../layout/columns";
-import type { Graph, GraphNode } from "../schema";
+import { decodeFeatureMaps } from "../layout/maps";
+import type { FeatureMaps, Graph, GraphNode } from "../schema";
 import type { Theme } from "../theme";
 import { formatActivation, formatCount, formatShape } from "../ui/format";
 import { type EdgeBundle, buildEdges, gradientColour } from "./edges";
@@ -59,7 +60,7 @@ export function buildNetwork(layout: Layout, graph: Graph, theme: Theme): Networ
   const neuronColumns = layout.columns.filter((column) => !column.maps);
   root.add(buildNeurons(neuronColumns, theme), buildEllipses(neuronColumns, theme));
   for (const column of layout.columns) {
-    if (column.maps) root.add(buildSlabs(column, columnPosition(column, layout.columns.length), theme));
+    if (column.maps) root.add(buildSlabs(column, columnPosition(column, layout.columns.length), theme, graph.feature_maps?.[column.node.id]));
   }
 
   return { root, pickables, edges, theme };
@@ -72,6 +73,7 @@ export function disposeNetwork(network: Network): void {
     if (object instanceof CSS2DObject) object.element.remove();
     if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
       object.geometry.dispose();
+      (object.material as THREE.MeshBasicMaterial).map?.dispose();
       (object.material as THREE.Material).dispose();
     }
   });
@@ -104,21 +106,28 @@ function columnPosition(column: ColumnLayout, columnCount: number): number {
 /**
  * One feature-map stack: opaque slabs, back to front, so each hides the one
  * behind it, outlined in the layer's colour. Back slabs fade, so the front
- * one (where the funnels start and end) reads first.
+ * one (where the funnels start and end) reads first. When the graph recorded
+ * the layer's real output, each slab shows its channel as a pixel image, from
+ * the panel colour (no response) to the layer colour (strongest response);
+ * the front slab shows the most active channel.
  */
-function buildSlabs(column: ColumnLayout, t: number, theme: Theme): THREE.Group {
+function buildSlabs(column: ColumnLayout, t: number, theme: Theme, recorded: FeatureMaps | undefined): THREE.Group {
   const slabs = column.maps!.slabs;
   const colour = gradientColour(theme.edgeGradient, t);
   const fill = new THREE.Color(theme.panelFill); // untinted: the outlines carry the layer colour
+  const images = recorded ? decodeFeatureMaps(recorded) : [];
   const group = new THREE.Group();
 
   const positions: number[] = [];
   const colours: number[] = [];
   slabs.forEach(({ left, bottom, width, height }, i) => {
     const z = 0.5 + i * 0.02;
+    const image = images[slabs.length - 1 - i]; // the front slab (last) shows the first, most active channel
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(width, height).translate(left + width / 2, bottom + height / 2, z),
-      new THREE.MeshBasicMaterial({ color: fill }),
+      new THREE.MeshBasicMaterial(
+        image ? { map: mapTexture(image, recorded!.width, recorded!.height, fill, colour) } : { color: fill },
+      ),
     );
     group.add(plane);
 
@@ -139,6 +148,34 @@ function buildSlabs(column: ColumnLayout, t: number, theme: Theme): THREE.Group 
   lines.renderOrder = 3;
   group.add(lines);
   return group;
+}
+
+/**
+ * A feature map as a texture, shaded from `low` to `high`. Pixels stay square
+ * (nearest filtering), so the map's real resolution shows: a 5 x 5 pooled map
+ * looks like 25 cells. Colours are mixed in sRGB, as they are seen.
+ */
+function mapTexture(pixels: Uint8Array, width: number, height: number, low: THREE.Color, high: THREE.Color): THREE.DataTexture {
+  const from = low.clone().convertLinearToSRGB();
+  const to = high.clone().convertLinearToSRGB();
+  const data = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row += 1) {
+    const flipped = height - 1 - row; // textures start at the bottom row; the data starts at the top
+    for (let column = 0; column < width; column += 1) {
+      const v = pixels[row * width + column] / 255;
+      const at = (flipped * width + column) * 4;
+      data[at] = Math.round(255 * (from.r + (to.r - from.r) * v));
+      data[at + 1] = Math.round(255 * (from.g + (to.g - from.g) * v));
+      data[at + 2] = Math.round(255 * (from.b + (to.b - from.b) * v));
+      data[at + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 /** Three small dots in the gap of every column that hides some neurons. */

@@ -14,7 +14,7 @@ More detail lives next to the code:
 ## How the pieces connect
 
 ```
-model + example input ──► adapters/torch_adapter.py ──► Graph (schema.py, pydantic)
+model + sample ───────► adapters/torch_adapter.py ──► Graph (schema.py, pydantic)
 System (system.py) ─────► many graphs merged, one group per network ─┘
 Graph ──► server.py (FastAPI: GET /api/graph, serves static/) ──► frontend reads /api/graph
 ```

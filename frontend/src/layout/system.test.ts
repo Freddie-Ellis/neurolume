@@ -27,6 +27,7 @@ const system: Graph = {
     { id: "cls", label: "Classifier", parent: null, collapsed: false, framework: null },
   ],
   weights: null,
+  feature_maps: null,
 };
 
 describe("isSystem", () => {

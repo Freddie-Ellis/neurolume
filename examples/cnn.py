@@ -1,12 +1,15 @@
 """A LeNet-style CNN for 28x28 greyscale images (MNIST), the Phase 2 reference model.
 
 Convolution and pooling layers are drawn as stacks of feature maps: one slab
-per channel, sized by the map's height and width. `keras_cnn.py` builds the
-same network in Keras, and the two produce matching graphs.
+per channel, painted with what that channel outputs for the sample input (a
+drawn "7"). Passing just the shape, (1, 28, 28), draws the same architecture
+with plain slabs. `keras_cnn.py` builds the same network in Keras, and the two
+produce matching graphs.
 """
 
 import neurolume
 import torch
+from neurolume.demo import sample_digit
 from torch import nn
 
 
@@ -37,4 +40,6 @@ class LeNet(nn.Module):
 
 
 if __name__ == "__main__":
-    neurolume.show(LeNet(), torch.randn(1, 1, 28, 28))
+    torch.manual_seed(0)
+    digit = torch.from_numpy(sample_digit()).reshape(1, 1, 28, 28)  # batch, channels, height, width
+    neurolume.show(LeNet(), digit)

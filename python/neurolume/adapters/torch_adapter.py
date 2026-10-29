@@ -19,9 +19,10 @@ import torch.nn.functional as F
 from torch import fx, nn
 from torch.fx.passes.shape_prop import ShapeProp
 
-from ..schema import Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
+from ..feature_maps import feature_maps as encode_feature_maps
+from ..schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
 from ..weights import DEFAULT_K, SampleMode, sample_dense
-from .base import fold_activations
+from .base import carry_through_folds, fold_activations, is_shape, needs_sample_error
 
 ACTIVATION_MODULES: dict[type[nn.Module], str] = {
     nn.ReLU: "relu",
@@ -59,27 +60,34 @@ ACTIVATION_METHODS = {"relu", "sigmoid", "tanh", "softmax", "log_softmax"}
 
 def from_torch(
     model: nn.Module,
-    example_input: Any = None,
+    sample: Any = None,
     *,
     fold_activations_into_layers: bool = True,
     weights: SampleMode | None = "topk",
     weight_k: int = DEFAULT_K,
     group_submodules: bool | None = None,
+    feature_maps: bool = True,
 ) -> Graph:
-    """Build a Graph from a PyTorch module and an example input batch.
+    """Build a Graph from a PyTorch module and a sample: an input shape or real data (see ``to_graph``).
+
+    With real data, ``feature_maps`` records the output of image-like layers for
+    the first example in the batch, which the viewer paints onto their slabs.
 
     ``group_submodules`` groups layers by the top-level child module they live
     in (``self.encoder``, ``self.decoder``), so the viewer shows each as its own
     network in a system overview. ``None`` does this automatically when the
     model has at least two such sub-networks.
     """
-    inputs = _as_tuple(example_input)
+    if sample is None:
+        raise needs_sample_error(model)
+    real_data = not _is_shapes(sample)
+    inputs = _as_inputs(sample)
     was_training = model.training
     model.eval()  # avoid updating BatchNorm statistics while measuring shapes
     try:
         with torch.no_grad():
             try:
-                nodes, edges, modules = _trace_with_fx(model, inputs)
+                nodes, edges, modules, outputs = _trace_with_fx(model, inputs)
             except Exception as error:  # fx raises many different error types
                 warnings.warn(
                     f"torch.fx could not trace {type(model).__name__} ({error}); "
@@ -87,11 +95,18 @@ def from_torch(
                     stacklevel=3,
                 )
                 nodes, edges, modules = _walk_modules(model, inputs)
+                outputs = {}
     finally:
         model.train(was_training)
 
     if fold_activations_into_layers:
+        edges_before = edges
         nodes, edges = fold_activations(nodes, edges)
+        outputs = carry_through_folds(edges_before, nodes, outputs)
+
+    maps: dict[str, FeatureMaps] = {}
+    if feature_maps and real_data:  # zeros made up from a shape would only give blank pictures
+        maps = {node_id: encode_feature_maps(output.numpy()) for node_id, output in outputs.items()}
 
     groups: list[GraphGroup] = []
     if group_submodules is not False:
@@ -115,7 +130,22 @@ def from_torch(
         edges=edges,
         groups=groups,
         weights=weight_samples or None,
+        feature_maps=maps or None,
     )
+
+
+class _RecordingShapeProp(ShapeProp):
+    """ShapeProp that also keeps every image-like output (the first example of the batch)."""
+
+    def __init__(self, module: fx.GraphModule) -> None:
+        super().__init__(module)
+        self.outputs: dict[str, torch.Tensor] = {}
+
+    def run_node(self, n: fx.Node) -> Any:
+        result = super().run_node(n)
+        if isinstance(result, torch.Tensor) and result.dim() == 4:  # [batch, channels, height, width]
+            self.outputs[n.name] = result[0].detach().float().cpu()
+        return result
 
 
 def _group_by_submodule(
@@ -146,10 +176,11 @@ def _group_by_submodule(
 
 def _trace_with_fx(
     model: nn.Module, inputs: tuple[Any, ...]
-) -> tuple[list[GraphNode], list[GraphEdge], dict[str, nn.Module]]:
+) -> tuple[list[GraphNode], list[GraphEdge], dict[str, nn.Module], dict[str, torch.Tensor]]:
     traced = fx.symbolic_trace(model)
+    recorder = _RecordingShapeProp(traced)
     if inputs:
-        ShapeProp(traced).propagate(*inputs)
+        recorder.propagate(*inputs)
 
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
@@ -199,7 +230,8 @@ def _trace_with_fx(
             GraphEdge(source=ids[source.name], target=node_id, tensor_shape=_shape_of(source)) for source in sources
         )
 
-    return nodes, edges, modules
+    outputs = {ids[name]: output for name, output in recorder.outputs.items() if name in ids}
+    return nodes, edges, modules, outputs
 
 
 def _walk_modules(
@@ -370,9 +402,14 @@ def _tensor_shape(value: Any) -> list[int]:
     return list(value.shape[1:]) if isinstance(value, torch.Tensor) else []
 
 
-def _as_tuple(example_input: Any) -> tuple[Any, ...]:
-    if example_input is None:
-        return ()
-    if isinstance(example_input, (tuple, list)):
-        return tuple(example_input)
-    return (example_input,)
+def _is_shapes(sample: Any) -> bool:
+    """A shape, or one shape per input of a multi-input model."""
+    return is_shape(sample) or (isinstance(sample, (tuple, list)) and len(sample) > 0 and all(is_shape(item) for item in sample))
+
+
+def _as_inputs(sample: Any) -> tuple[Any, ...]:
+    """The model's positional inputs: real tensors as given, or a zero batch of one per shape."""
+    if is_shape(sample):
+        return (torch.zeros(1, *sample),)
+    items = tuple(sample) if isinstance(sample, (tuple, list)) else (sample,)
+    return tuple(torch.zeros(1, *item) if is_shape(item) else item for item in items)

@@ -19,7 +19,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
-from .schema import Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, WeightSample
+from .schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, WeightSample
 
 SEPARATOR = "/"
 
@@ -40,12 +40,15 @@ class System:
         self._blocks: dict[str, GraphNode] = {}
         self._links: list[tuple[Component, Component, str | None]] = []
 
-    def add(self, name: str, model: Any, example_input: Any = None, *, label: str | None = None, **adapter_options: Any) -> Component:
-        """Add a network: a PyTorch or Keras model, or a ready-made Graph."""
+    def add(self, name: str, model: Any, sample: Any = None, *, label: str | None = None, **adapter_options: Any) -> Component:
+        """Add a network: a PyTorch or Keras model, or a ready-made Graph.
+
+        ``sample`` is an input shape such as ``(1, 28, 28)`` or real data (see ``neurolume.to_graph``).
+        """
         from .adapters import to_graph
 
         self._check_name(name)
-        self._networks[name] = to_graph(model, example_input, **adapter_options)
+        self._networks[name] = to_graph(model, sample, **adapter_options)
         self._labels[name] = label or name
         return Component(name, "network")
 
@@ -92,6 +95,7 @@ class System:
         edges: list[GraphEdge] = []
         groups: list[GraphGroup] = []
         weights: dict[str, WeightSample] = {}
+        feature_maps: dict[str, FeatureMaps] = {}
 
         for name, graph in self._networks.items():
             prefix = f"{name}{SEPARATOR}"
@@ -105,6 +109,8 @@ class System:
                 edges.append(edge.model_copy(update={"source": prefix + edge.source, "target": prefix + edge.target}))
             for node_id, sample in (graph.weights or {}).items():
                 weights[prefix + node_id] = sample
+            for node_id, maps in (graph.feature_maps or {}).items():
+                feature_maps[prefix + node_id] = maps
         nodes.extend(self._blocks.values())
 
         for source, target, label in self._links:
@@ -129,6 +135,7 @@ class System:
             edges=edges,
             groups=groups,
             weights=weights or None,
+            feature_maps=feature_maps or None,
         )
 
     def _check_name(self, name: str) -> None:

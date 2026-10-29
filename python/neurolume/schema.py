@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION: Final[str] = "1.2"
+SCHEMA_VERSION: Final[str] = "1.3"
 
 NodeType = Literal[
     "input",
@@ -95,6 +95,22 @@ class WeightSample(BaseModel):
     pairs: list[tuple[int, int, float]]
 
 
+class FeatureMaps(BaseModel):
+    """A few channels of one layer's output for the sample input, as small greyscale images.
+
+    ``channels`` are the channel numbers shown, most active first. ``data`` is base64 of ``len(channels) * height * width`` bytes: channel by
+    channel, each image row by row from the top. Each channel is scaled to
+    0-255 on its own, so the images show where a channel responds, not how strongly.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    channels: list[int]
+    height: int = Field(ge=1)
+    width: int = Field(ge=1)
+    data: str
+
+
 class Graph(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
@@ -104,6 +120,8 @@ class Graph(BaseModel):
     edges: list[GraphEdge]
     groups: list[GraphGroup] = Field(default_factory=list)
     weights: dict[str, WeightSample] | None = None
+    # Outputs of image-like layers for the sample input (real data only), keyed by node id.
+    feature_maps: dict[str, FeatureMaps] | None = None
 
     @model_validator(mode="after")
     def _check_references(self) -> "Graph":
@@ -126,4 +144,7 @@ class Graph(BaseModel):
         for node_id in self.weights or {}:
             if node_id not in known_nodes:
                 raise ValueError(f"weights refer to unknown node {node_id!r}")
+        for node_id in self.feature_maps or {}:
+            if node_id not in known_nodes:
+                raise ValueError(f"feature maps refer to unknown node {node_id!r}")
         return self

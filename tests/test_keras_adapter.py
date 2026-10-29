@@ -78,12 +78,12 @@ def test_functional_models_keep_their_branches() -> None:
     assert graph.nodes[3].type == "add"
 
 
-def test_unbuilt_sequential_needs_an_example_input() -> None:
-    model = keras.Sequential([layers.Dense(3), layers.Dense(2)])
-    with pytest.raises(ValueError, match="example input"):
-        to_graph(model)
-    graph = to_graph(keras.Sequential([layers.Dense(3), layers.Dense(2)]), np.zeros((1, 5), dtype="float32"))
-    assert [node.output_shape for node in graph.nodes] == [[5], [3], [2], [2]]
+def test_unbuilt_sequential_needs_a_shape_or_data() -> None:
+    with pytest.raises(ValueError, match=r"keras\.Input"):
+        to_graph(keras.Sequential([layers.Dense(3), layers.Dense(2)]))
+    from_shape = to_graph(keras.Sequential([layers.Dense(3), layers.Dense(2)]), (5,))
+    from_data = to_graph(keras.Sequential([layers.Dense(3), layers.Dense(2)]), np.zeros((1, 5), dtype="float32"))
+    assert [node.output_shape for node in from_shape.nodes] == [node.output_shape for node in from_data.nodes] == [[5], [3], [2], [2]]
 
 
 def test_systems_can_mix_frameworks() -> None:
@@ -95,3 +95,31 @@ def test_systems_can_mix_frameworks() -> None:
 
     assert {group.id: group.framework for group in graph.groups} == {"features": "keras", "head": "pytorch"}
     assert graph.model.framework == "mixed"
+
+
+def test_keras_feature_maps_need_real_data_and_are_channels_first() -> None:
+    from neurolume.demo import sample_digit
+
+    assert to_graph(build_lenet(), weights=None).feature_maps is None
+    assert to_graph(build_lenet(), (28, 28, 1), weights=None).feature_maps is None  # a shape draws plain slabs
+    graph = to_graph(build_lenet(), sample_digit().reshape(1, 28, 28, 1), weights=None)
+    maps = graph.feature_maps
+    assert maps is not None
+    # Keras numbers layer names per session (conv2d_3, ...), so compare by layer in order.
+    assert [(node.type, len(maps[node.id].channels), maps[node.id].height) for node in graph.nodes if node.id in maps] == [
+        ("input", 1, 28),
+        ("conv2d", 6, 28),
+        ("pool", 6, 14),
+        ("conv2d", 12, 10),
+        ("norm", 12, 10),  # its ReLU layer is folded in
+        ("pool", 12, 5),
+    ]
+
+
+def test_systems_keep_feature_maps_under_prefixed_ids() -> None:
+    from neurolume.demo import sample_digit
+
+    system = System()
+    system.add("cnn", LeNet(), torch.from_numpy(sample_digit()).reshape(1, 1, 28, 28))
+    maps = system.to_graph().feature_maps
+    assert maps is not None and "cnn/conv1" in maps

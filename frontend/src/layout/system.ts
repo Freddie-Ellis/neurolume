@@ -92,6 +92,7 @@ export function subgraph(graph: Graph, groupId: string): Graph {
   }
 
   const weights = Object.fromEntries(Object.entries(graph.weights ?? {}).filter(([id]) => ids.has(id)));
+  const featureMaps = Object.fromEntries(Object.entries(graph.feature_maps ?? {}).filter(([id]) => ids.has(id)));
   return {
     schema_version: graph.schema_version,
     model: {
@@ -103,6 +104,7 @@ export function subgraph(graph: Graph, groupId: string): Graph {
     edges,
     groups: [],
     weights: Object.keys(weights).length > 0 ? weights : null,
+    feature_maps: Object.keys(featureMaps).length > 0 ? featureMaps : null,
   };
 }
 

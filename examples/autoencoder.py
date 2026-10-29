@@ -21,4 +21,4 @@ class Autoencoder(nn.Module):
 
 
 if __name__ == "__main__":
-    neurolume.show(Autoencoder(), torch.randn(1, 1, 28, 28))
+    neurolume.show(Autoencoder(), (1, 28, 28))  # the shape of one input

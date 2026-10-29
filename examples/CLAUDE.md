@@ -7,7 +7,7 @@ Runnable scripts the user opens and edits often; keep them short and readable
 | --- | --- |
 | `demo.py` | The demo network (`neurolume.demo`), currently on `port=8000` for Vite dev |
 | `mlp.py` | 784-512-256-10 MLP (`MLP` class is imported by tests) |
-| `cnn.py` | LeNet-style CNN in PyTorch (`LeNet` is imported by tests) |
+| `cnn.py` | LeNet-style CNN in PyTorch (`LeNet` is imported by tests), fed `sample_digit()` so slabs show real feature maps |
 | `keras_cnn.py` | The same LeNet in Keras (`build_lenet()`); must match `cnn.py` exactly |
 | `keras_mlp.py` | The MLP in Keras (`build_mlp()`); must match `mlp.py` |
 | `system.py` | `System` builder: sensor → encoder → decoder/classifier, plus blocks (`build_system()` is imported by tests) |

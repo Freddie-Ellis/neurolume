@@ -24,4 +24,4 @@ class MLP(nn.Module):
 
 
 if __name__ == "__main__":
-    neurolume.show(MLP(), torch.randn(1, 1, 28, 28))
+    neurolume.show(MLP(), (1, 28, 28))  # the shape of one input: 1 channel, 28 x 28 pixels

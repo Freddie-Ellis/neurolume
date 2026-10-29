@@ -76,7 +76,7 @@ export function attachInteraction(
           node.param_count > 0 ? `${formatParams(node.param_count)} params` : "",
         ].filter(Boolean);
         tooltip.innerHTML =
-          `<div class="tooltip-title">${escapeHtml(titleFor(node))} <span>${escapeHtml(node.label)}</span></div>` +
+          `<div class="tooltip-title">${escapeHtml(titleFor(node))}${node.label !== titleFor(node) ? ` <span>${escapeHtml(node.label)}</span>` : ""}</div>` +
           `<div class="tooltip-meta">${details.map(escapeHtml).join(" · ")}</div>`;
         tooltip.style.transform = `translate(${event.clientX + 16}px, ${event.clientY + 16}px)`;
       }

@@ -134,6 +134,8 @@ export function slotFor(index: number, units: number, shown: number): number {
 
 export function layoutGraph(graph: Graph): Layout {
   const columnNodes = graph.nodes.filter((node) => !isBand(node));
+  // Stacks are sized against the network's largest feature map.
+  const largestMap = Math.max(1, ...graph.nodes.filter((node) => isMapShape(node.output_shape)).flatMap((node) => node.output_shape.slice(1)));
   const columns: ColumnLayout[] = [];
   const pendingBands: GraphNode[][] = [[]]; // bands after column i live in pendingBands[i + 1]
   const placeholder = { left: 0, right: 0, top: 0, bottom: 0 };
@@ -147,7 +149,7 @@ export function layoutGraph(graph: Graph): Layout {
     const x = columns.length * COLUMN_SPACING;
     const index = columns.length;
     if (drawsMaps(node, columnNodes[index + 1])) {
-      const maps = mapStack(node.output_shape, x);
+      const maps = mapStack(node.output_shape, x, largestMap);
       const front = frontSlab(maps);
       const ports = mapPorts(maps);
       columns.push({ node, index, x, units, slots: ports, ellipsisY: null, maps, entryX: front.left, exitX: front.left + front.width, panel: placeholder });

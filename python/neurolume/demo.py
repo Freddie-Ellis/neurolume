@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     import torch
 
@@ -47,3 +49,26 @@ def demo_input() -> torch.Tensor:
     import torch
 
     return torch.randn(1, INPUT_FEATURES)
+
+
+# A "7" as strokes between points in a 28 x 28 image (x, y from the top left).
+_SEVEN = [((6.5, 7.0), (21.0, 7.0)), ((21.0, 7.0), (12.0, 23.0)), ((10.0, 15.0), (19.0, 15.0))]
+
+
+def sample_digit(size: int = 28) -> np.ndarray:
+    """A handwritten-looking "7" as a float32 image in [0, 1], MNIST style (white on black).
+
+    Feeding a CNN a real-looking picture, instead of random noise, makes the
+    feature maps the viewer draws on each layer worth looking at. Built from a
+    few anti-aliased strokes, so no dataset download is needed.
+    """
+    scale = size / 28
+    ys, xs = np.mgrid[0:size, 0:size].astype(np.float32) + 0.5
+    distance = np.full((size, size), np.inf, dtype=np.float32)
+    for (x0, y0), (x1, y1) in _SEVEN:
+        x0, y0, x1, y1 = (value * scale for value in (x0, y0, x1, y1))
+        # Distance from every pixel to the stroke's line segment.
+        dx, dy = x1 - x0, y1 - y0
+        t = np.clip(((xs - x0) * dx + (ys - y0) * dy) / (dx * dx + dy * dy), 0, 1)
+        distance = np.minimum(distance, np.hypot(xs - (x0 + t * dx), ys - (y0 + t * dy)))
+    return np.clip(1.6 * scale - distance + 0.5, 0, 1).astype(np.float32)  # strokes about 3 px wide

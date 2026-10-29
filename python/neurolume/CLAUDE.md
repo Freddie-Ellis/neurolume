@@ -10,9 +10,10 @@
 | `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, Dropout, Flatten |
 | `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling |
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
+| `feature_maps.py` | `feature_maps()`: a `[C, H, W]` array → `FeatureMaps` (12 most active channels first, ≤32×32, 0-255 per channel, base64) |
 | `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=)` |
 | `server.py` | FastAPI app, `show()` (background thread, free port), `demo_graph()` fallback |
-| `demo.py` | `demo_model(nested=False)` / `demo_input()`; torch imported inside the functions |
+| `demo.py` | `demo_model()` / `demo_input()` (torch imported inside), `sample_digit()`: a drawn "7" (numpy) for CNN examples |
 
 ## Graph conventions
 
@@ -29,6 +30,11 @@
 - Activations are folded into the previous layer's `activation` field by default
   (`fold_activations_into_layers=False` to keep them).
 - `weights` is keyed by dense node id; never ship full matrices.
+- `feature_maps` (schema 1.3) is keyed by node id: the real output of image-like
+  layers for the first example of a real-data `sample`. torch records it in
+  `_RecordingShapeProp`; Keras via a probe `keras.Model`. Folded
+  activations hand their maps to the layer they fold into (`carry_through_folds`).
+  Pass `feature_maps=False` to skip; the MLP snapshot test does.
 
 ## Groups and systems (schema 1.2)
 
@@ -56,6 +62,13 @@
   TensorFlow has no Python 3.14 wheels.
 
 ## Gotchas
+
+- The second argument everywhere is **`sample`** (renamed from
+  `example_input`, which confused users who had already given Keras an input
+  shape). It is either a shape without the batch dimension (`is_shape()`:
+  `(1, 28, 28)`, `torch.Size`), turned into a zero batch, or real data. Only
+  real data records feature maps. PyTorch without a sample raises
+  `needs_sample_error()`, which explains what to pass.
 
 - `demo_graph()` must match `to_graph(demo_model(), demo_input(), weights=None)`
   exactly — `tests/test_demo.py` checks nodes, edges and total params.

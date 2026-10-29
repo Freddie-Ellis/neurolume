@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Graph, GraphNode } from "../schema";
 import { layoutGraph } from "./columns";
-import { MAX_MAPS_SHOWN, MAX_MAP_SIZE, MIN_MAP_SIZE, frontSlab, funnel, mapPorts, mapStack, stackExtent } from "./maps";
+import { MAX_MAPS_SHOWN, MAX_MAP_SIZE, MIN_MAP_SIZE, decodeFeatureMaps, frontSlab, funnel, mapPorts, mapStack, stackExtent } from "./maps";
 
 describe("mapStack", () => {
   it("draws one slab per channel, capped, centred on the column", () => {
@@ -14,10 +14,13 @@ describe("mapStack", () => {
     expect(mapStack([64, 8, 8], 0).slabs).toHaveLength(MAX_MAPS_SHOWN);
   });
 
-  it("sizes slabs by the feature map, within limits", () => {
-    expect(frontSlab(mapStack([1, 28, 28], 0)).width).toBe(168);
-    expect(frontSlab(mapStack([1, 2, 2], 0)).width).toBe(MIN_MAP_SIZE);
-    expect(frontSlab(mapStack([1, 224, 112], 0))).toMatchObject({ width: MAX_MAP_SIZE, height: MAX_MAP_SIZE });
+  it("sizes slabs against the network's largest map, by square root, within limits", () => {
+    expect(frontSlab(mapStack([1, 28, 28], 0, 28)).width).toBe(MAX_MAP_SIZE);
+    expect(frontSlab(mapStack([1, 7, 7], 0, 28)).width).toBeCloseTo(MAX_MAP_SIZE / 2);
+    expect(frontSlab(mapStack([1, 1, 1], 0, 224)).width).toBe(MIN_MAP_SIZE);
+    const wide = frontSlab(mapStack([1, 56, 224], 0, 224));
+    expect(wide.width).toBe(MAX_MAP_SIZE);
+    expect(wide.height).toBeCloseTo(MAX_MAP_SIZE / 2);
   });
 
   it("puts edge ports inside the front slab", () => {
@@ -34,10 +37,10 @@ describe("mapStack", () => {
 describe("funnel", () => {
   it("runs from a kernel-sized window to one point on the next stack", () => {
     const from = mapStack([1, 28, 28], 0);
-    const to = mapStack([6, 24, 24], 300);
+    const to = mapStack([6, 24, 24], 300, 28);
     const segments = funnel(from, to, [5, 5]);
     const [left, bottom, right] = segments[0];
-    expect(right - left).toBeCloseTo((5 / 28) * 168);
+    expect(right - left).toBeCloseTo((5 / 28) * frontSlab(from).width);
     const tips = segments.slice(4).map(([, , x, y]) => `${x},${y}`);
     expect(new Set(tips).size).toBe(1);
     const target = frontSlab(to);
@@ -58,6 +61,7 @@ describe("layoutGraph with feature maps", () => {
     edges: [],
     groups: [],
     weights: null,
+    feature_maps: null,
   };
   const { columns } = layoutGraph(cnn);
 
@@ -70,5 +74,13 @@ describe("layoutGraph with feature maps", () => {
     const front = frontSlab(columns[1].maps!);
     expect(columns[1].exitX).toBeCloseTo(front.left + front.width);
     expect(columns[2].entryX).toBe(columns[2].x);
+  });
+});
+
+describe("decodeFeatureMaps", () => {
+  it("splits the base64 bytes into one image per channel", () => {
+    const bytes = [0, 1, 2, 3, 250, 251, 252, 253];
+    const images = decodeFeatureMaps({ channels: [0, 1], height: 2, width: 2, data: btoa(String.fromCharCode(...bytes)) });
+    expect(images.map((image) => Array.from(image))).toEqual([[0, 1, 2, 3], [250, 251, 252, 253]]);
   });
 });

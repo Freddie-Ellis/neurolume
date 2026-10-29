@@ -131,11 +131,11 @@ class Stage {
   show(view: View): void {
     const goingIn = this.view !== null && view.parent !== null;
     this.view = view;
+    this.onViewChange(view); // first, so the title card has its final size before fitting
     this.remount();
     this.fit();
     // Only when going in: leftover scrolling would otherwise zoom straight into the network.
     if (goingIn) this.viewer.pauseZoom(ZOOM_PAUSE_MS);
-    this.onViewChange(view);
   }
 
   /** Go up to the parent view. Returns false at the top level. */
@@ -315,6 +315,8 @@ async function main(): Promise<void> {
     theme,
   );
   app.append(titleCard);
+  // Fitting leaves room for the title card, so it never covers the first panel's header.
+  viewer.fitInsetTop = () => titleCard.getBoundingClientRect().bottom - app.getBoundingClientRect().top;
   backButton = buildControls(app, stage, theme);
 
   const open = (view: View) => stage?.show(view);

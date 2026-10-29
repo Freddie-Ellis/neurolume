@@ -4,16 +4,20 @@
  * a thin slab; the slabs are offset diagonally so the stack reads as depth,
  * like the classic LeNet diagrams. Plain maths with no three.js.
  */
+import type { FeatureMaps } from "../schema";
 
 /** Most slabs drawn per stack; the panel header gives the real channel count. */
 export const MAX_MAPS_SHOWN = 12;
-/** World units per pixel of feature map, so a 28 x 28 map is drawn 168 units wide. */
-export const MAP_SCALE = 6;
-export const MIN_MAP_SIZE = 32;
-export const MAX_MAP_SIZE = 170;
+/**
+ * Slab size for the network's largest feature map, which nearly fills a panel.
+ * Smaller maps scale with the square root of their size, so a 5 x 5 map next
+ * to a 28 x 28 one is still big enough to read (the header gives exact sizes).
+ */
+export const MAX_MAP_SIZE = 190;
+export const MIN_MAP_SIZE = 48;
 /** Diagonal offset between neighbouring slabs, and the most the whole stack may spread. */
 export const MAP_STEP = 8;
-export const MAX_MAP_DEPTH = 72;
+export const MAX_MAP_DEPTH = 64;
 /** Edges into or out of a stack meet its front slab at this many points. */
 export const MAP_PORTS = 12;
 
@@ -38,12 +42,16 @@ export function isMapShape(shape: number[]): boolean {
   return shape.length === 3;
 }
 
-/** The stack for a [channels, height, width] output, centred on (x, 0). */
-export function mapStack(shape: number[], x: number): MapStack {
+/**
+ * The stack for a [channels, height, width] output, centred on (x, 0).
+ * `largest` is the biggest height or width of any feature map in the network.
+ */
+export function mapStack(shape: number[], x: number, largest = Math.max(shape[1], shape[2])): MapStack {
   const [channels, mapHeight, mapWidth] = shape;
   const shown = Math.max(1, Math.min(channels, MAX_MAPS_SHOWN));
-  const width = clamp(mapWidth * MAP_SCALE, MIN_MAP_SIZE, MAX_MAP_SIZE);
-  const height = clamp(mapHeight * MAP_SCALE, MIN_MAP_SIZE, MAX_MAP_SIZE);
+  const side = (size: number) => clamp(MAX_MAP_SIZE * Math.sqrt(size / Math.max(largest, 1)), MIN_MAP_SIZE, MAX_MAP_SIZE);
+  const width = side(mapWidth);
+  const height = side(mapHeight);
   const step = shown > 1 ? Math.min(MAP_STEP, MAX_MAP_DEPTH / (shown - 1)) : 0;
   const depth = step * (shown - 1);
 
@@ -110,6 +118,13 @@ export function funnel(from: MapStack, to: MapStack, kernel: number[]): [number,
     [right, top, tipX, tipY],
     [left, top, tipX, tipY],
   ];
+}
+
+/** The pixels of each recorded channel (0-255, rows from the top), decoded from the graph's base64. */
+export function decodeFeatureMaps(maps: FeatureMaps): Uint8Array[] {
+  const bytes = Uint8Array.from(atob(maps.data), (character) => character.charCodeAt(0));
+  const size = maps.height * maps.width;
+  return maps.channels.map((_, i) => bytes.subarray(i * size, (i + 1) * size));
 }
 
 function clamp(value: number, min: number, max: number): number {

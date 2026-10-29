@@ -18,9 +18,10 @@ from typing import Any
 import keras
 import numpy as np
 
-from ..schema import Graph, GraphEdge, GraphNode, ModelInfo, NodeType, WeightSample
+from ..feature_maps import feature_maps as encode_feature_maps
+from ..schema import FeatureMaps, Graph, GraphEdge, GraphNode, ModelInfo, NodeType, WeightSample
 from ..weights import DEFAULT_K, SampleMode, sample_dense
-from .base import fold_activations
+from .base import carry_through_folds, fold_activations, is_shape
 
 # Weights that hold running statistics rather than learned parameters. PyTorch
 # keeps these as buffers, which it does not count as parameters, so neither do we.
@@ -36,23 +37,30 @@ ACTIVATION_LAYERS: dict[str, str] = {
 
 def from_keras(
     model: keras.Model,
-    example_input: Any = None,
+    sample: Any = None,
     *,
     fold_activations_into_layers: bool = True,
     weights: SampleMode | None = "topk",
     weight_k: int = DEFAULT_K,
+    feature_maps: bool = True,
 ) -> Graph:
     """Build a Graph from a Keras model.
 
-    Models with an ``Input`` already know their shapes; a Sequential model
-    without one is built by running ``example_input`` through it once.
+    Models that start with ``keras.Input`` already know their shapes, so
+    ``sample`` is optional. A Sequential model without one is built from the
+    sample: an input shape such as ``(28, 28, 1)`` (channels-last, as in
+    Keras) or real data. With real data, ``feature_maps`` also records the
+    output of image-like layers for its first example, which the viewer
+    paints onto their slabs.
     """
+    real_data = sample is not None and not is_shape(sample)
     if not model.built or not getattr(model, "inputs", None):
-        if example_input is None:
+        if sample is None:
             raise ValueError(
-                f"{model.name} has not been built; pass an example input batch, or start the model with keras.Input(...)"
+                f"{model.name} doesn't know its input size yet. Start it with keras.Input(...), or pass the shape "
+                "of one input (without the batch dimension), for example neurolume.show(model, (28, 28, 1))."
             )
-        model(example_input)
+        model(np.zeros((1, *sample), dtype="float32") if is_shape(sample) else sample)
 
     channels_last = keras.config.image_data_format() == "channels_last"
     nodes: list[GraphNode] = []
@@ -80,8 +88,19 @@ def from_keras(
         nodes.append(GraphNode(id=node_id, type="output", label="Output", input_shape=shape, output_shape=shape))
         edges.append(GraphEdge(source=ids[tensor._keras_history.operation.name], target=node_id, tensor_shape=shape))
 
+    outputs: dict[str, np.ndarray] = {}
+    if feature_maps and real_data:
+        outputs = _image_outputs(model, layers, channels_last, sample)
+        example = np.asarray(keras.ops.convert_to_numpy(sample))
+        if len(model.inputs) == 1 and example.ndim == 4:  # the input image itself
+            outputs[nodes[0].id] = _channels_first(example[0], channels_last)
+
     if fold_activations_into_layers:
+        edges_before = edges
         nodes, edges = fold_activations(nodes, edges)
+        outputs = carry_through_folds(edges_before, nodes, outputs)
+
+    maps: dict[str, FeatureMaps] = {node_id: encode_feature_maps(output) for node_id, output in outputs.items()}
 
     weight_samples: dict[str, WeightSample] | None = None
     if weights is not None:
@@ -98,7 +117,29 @@ def from_keras(
         nodes=nodes,
         edges=edges,
         weights=weight_samples or None,
+        feature_maps=maps or None,
     )
+
+
+def _image_outputs(
+    model: keras.Model, layers: list[keras.layers.Layer], channels_last: bool, sample: Any
+) -> dict[str, np.ndarray]:
+    """Each image-like layer's output for the first example, as [channels, height, width] arrays."""
+    wanted = [layer for layer in layers if len(layer.output.shape) == 4]  # [batch, height, width, channels]
+    if not wanted:
+        return {}
+    # A second model over the same layers that returns every image-like output at once.
+    probe = keras.Model(model.inputs, [layer.output for layer in wanted])
+    values = probe(sample if isinstance(sample, (list, tuple)) else [sample])
+    values = values if isinstance(values, (list, tuple)) else [values]
+    return {
+        layer.name: _channels_first(keras.ops.convert_to_numpy(value)[0], channels_last)
+        for layer, value in zip(wanted, values)
+    }
+
+
+def _channels_first(image: np.ndarray, channels_last: bool) -> np.ndarray:
+    return np.transpose(image, (2, 0, 1)) if channels_last else image
 
 
 def _layer_node(layer: keras.layers.Layer, input_shape: list[int], output_shape: list[int]) -> GraphNode:

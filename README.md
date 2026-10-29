@@ -19,13 +19,22 @@ Or from your own code:
 import torch
 import neurolume
 
-neurolume.show(model, torch.randn(1, 1, 28, 28))
+neurolume.show(model, (1, 28, 28))
 ```
+
+The second argument, `sample`, tells Neurolume what goes into the model so it
+can measure each layer. PyTorch models don't record their input size, so they
+need one; Keras models that start with `keras.Input` don't. It can be:
+
+- the **shape** of one input, without the batch dimension, like `keras.Input`:
+  `(1, 28, 28)`. Enough to draw the architecture.
+- **real data**, such as a batch of images. This also paints each convolution's
+  feature maps with what it outputs for that input.
 
 `show()` starts a local server on a free port and opens the viewer. It blocks
 until Ctrl+C when run as a script, and returns a `Viewer` immediately in a REPL
 or notebook (call `viewer.stop()` to shut it down). `neurolume.to_graph(model,
-example_input)` returns the graph JSON model without opening anything.
+sample)` returns the graph JSON model without opening anything.
 
 To try the demo network, a small PyTorch classifier defined in
 `python/neurolume/demo.py` (8 inputs, four hidden layers of 12, 4 classes):

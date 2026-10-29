@@ -75,11 +75,15 @@ export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, t
   return { link, lines, baseOpacity };
 }
 
-/** Convolution and pooling: a kernel window on one stack, narrowing to a point on the next. */
+/**
+ * Convolution and pooling: a kernel window on one stack, narrowing to a point
+ * on the next, drawn as outlines over a faint filled cone so it reads as one shape.
+ */
 function buildFunnel(link: LinkLayout, theme: Theme): EdgeBundle {
   const kernel = link.to.node.params["kernel_size"];
   const segments = funnel(link.from.maps!, link.to.maps!, Array.isArray(kernel) ? (kernel as number[]) : [3, 3]);
-  const { r, g, b } = gradientColour(theme.edgeGradient, link.t);
+  const colour = gradientColour(theme.edgeGradient, link.t);
+  const { r, g, b } = colour;
   const positions = segments.flatMap(([x0, y0, x1, y1]) => [x0, y0, 1.5, x1, y1, 1.5]);
   const colours = segments.flatMap(() => [r, g, b, 1, r, g, b, 1]);
 
@@ -90,7 +94,33 @@ function buildFunnel(link: LinkLayout, theme: Theme): EdgeBundle {
   const material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: baseOpacity, depthWrite: false });
   const lines = new THREE.LineSegments(geometry, material);
   lines.renderOrder = 4; // over the slabs it starts and ends on
+
+  // The cone: the convex hull of the window's corners and the tip.
+  const points = convexHull(segments.slice(0, 4).map(([x, y]) => [x, y] as [number, number]).concat([[segments[4][2], segments[4][3]]]));
+  const cone = new THREE.Mesh(
+    new THREE.ShapeGeometry(new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)))).translate(0, 0, 1.4),
+    new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.12, depthWrite: false }),
+  );
+  cone.renderOrder = 4;
+  lines.add(cone);
   return { link, lines, baseOpacity };
+}
+
+/** Convex hull of a few points (Andrew's monotone chain), anticlockwise. */
+function convexHull(points: [number, number][]): [number, number][] {
+  const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (list: [number, number][]) => {
+    const hull: [number, number][] = [];
+    for (const point of list) {
+      while (hull.length >= 2 && cross(hull[hull.length - 2], hull[hull.length - 1], point) <= 0) hull.pop();
+      hull.push(point);
+    }
+    hull.pop();
+    return hull;
+  };
+  return [...half(sorted), ...half([...sorted].reverse())];
 }
 
 export function setEdgeOpacity(bundle: EdgeBundle, opacity: number): void {
