@@ -1,6 +1,525 @@
-:root { color: #fff; font-family: system-ui, sans-serif; background: #06104a; }
-body { margin: 0; min-height: 100vh; }
-#app { display: flex; justify-content: space-evenly; align-items: center; min-height: 100vh; }
-.column { display: flex; flex-direction: column; align-items: center; gap: 14px; }
-.column h2 { font-size: 1rem; font-weight: 500; }
-.node { width: 18px; height: 18px; border-radius: 50%; background: #ddd; box-shadow: 0 0 16px #a24dff; }
+/*
+ * Design tokens. Spacing follows a 4/8/12/16/24 scale and type a 11/12/14/16/20
+ * scale; text uses three neutral levels so hierarchy does not rely on size alone.
+ * Each theme sets the same tokens; the scene colours live in theme.ts.
+ */
+:root,
+:root[data-theme="dark"] {
+  --text-1: #fafafa;
+  --text-2: #d4d4d8;
+  --text-3: #a1a1aa;
+  --accent: #c084fc;
+  --accent-soft: rgba(192, 132, 252, 0.18);
+  --hover: rgba(255, 255, 255, 0.07);
+  --inset: rgba(255, 255, 255, 0.05);
+  --surface: rgba(18, 18, 24, 0.86);
+  --surface-border: rgba(255, 255, 255, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --label-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  --page: #050507;
+}
+
+:root[data-theme="light"] {
+  --text-1: #09090b;
+  --text-2: #3f3f46;
+  --text-3: #71717a;
+  --accent: #7c3aed;
+  --accent-soft: rgba(124, 58, 237, 0.12);
+  --hover: rgba(0, 0, 0, 0.05);
+  --inset: rgba(0, 0, 0, 0.04);
+  --surface: rgba(255, 255, 255, 0.92);
+  --surface-border: rgba(0, 0, 0, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.08);
+  --label-shadow: 0 0 3px rgba(255, 255, 255, 0.9);
+  --page: #ececee;
+}
+
+:root {
+  --radius: 12px;
+
+  color: var(--text-1);
+  font-family: "Inter Variable", system-ui, sans-serif;
+  font-size: 14px;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  background: var(--page);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+#app > canvas {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+#app > canvas:active {
+  cursor: grabbing;
+}
+
+p,
+h1,
+h2,
+h3 {
+  margin: 0;
+}
+
+.surface {
+  /* Above the scene labels; see .labels. */
+  z-index: 1;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+.eyebrow {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---- Labels drawn in the scene ---- */
+
+.labels {
+  position: absolute;
+  inset: 0;
+  /*
+   * three.js gives every label its own z-index to sort them by depth. This
+   * keeps that sorting inside the label layer, so the floating cards (which
+   * sit at z-index 1) are always drawn over the labels and can blur them.
+   */
+  z-index: 0;
+  pointer-events: none;
+  text-shadow: var(--label-shadow);
+}
+
+.layer-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.layer-name {
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.layer-kind {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.band-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: none;
+}
+
+.layer-header.is-active .layer-kind {
+  color: var(--text-1);
+}
+
+.band-chip.is-active {
+  border-color: var(--accent);
+  color: var(--text-1);
+}
+
+.labels[data-detail="low"] .layer-kind,
+.labels[data-detail="low"] .band-chip {
+  display: none;
+}
+
+/* ---- Title card ---- */
+
+.title-card {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 24px 16px 16px;
+}
+
+.title-card h1 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.title-meta {
+  display: flex;
+  gap: 16px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.title-meta strong {
+  color: var(--text-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Controls ---- */
+
+.controls {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.controls button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+
+.controls button:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+
+.controls button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+
+.controls button:focus-visible,
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The inspector replaces the controls' corner while it is open. */
+.inspector:not([hidden]) ~ .controls {
+  right: 352px;
+}
+
+.hint {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  color: var(--text-3);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* ---- Tooltip ---- */
+
+.tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.tooltip-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tooltip-title span {
+  margin-left: 4px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.tooltip-meta {
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Inspector ---- */
+
+.inspector {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  width: 320px;
+  padding: 24px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.inspector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.inspector h2 {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.subtitle {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 24px 0;
+}
+
+.stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--inset);
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat-label {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.inspector section + section {
+  margin-top: 24px;
+}
+
+.inspector h3 {
+  margin-bottom: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.inspector dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  margin: 0;
+  font-size: 14px;
+}
+
+.inspector dt,
+.inspector dd {
+  padding: 8px 0;
+  border-top: 1px solid var(--surface-border);
+}
+
+.inspector dt {
+  color: var(--text-2);
+}
+
+.inspector dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  margin-top: 24px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.error {
+  margin: 24px;
+  color: #f87171;
+  white-space: pre-wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .controls button {
+    transition: none;
+  }
+}
+
+/* `display: flex` above would otherwise override the hidden attribute. */
+.controls button[hidden] {
+  display: none;
+}
+
+/* ---- System overview ---- */
+
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.open-hint {
+  color: var(--accent);
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.card-footer.is-active {
+  color: var(--text-2);
+}
+
+.card-footer.is-active .open-hint {
+  opacity: 1;
+}
+
+.link-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-shadow: none;
+}
+
+.labels[data-detail="low"] .card-footer,
+.labels[data-detail="low"] .link-chip {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .open-hint {
+    transition: none;
+  }
+}
+
+/* ---- Colourmap picker ---- */
+
+.colormap-picker {
+  position: relative;
+}
+
+.swatch {
+  display: inline-block;
+  width: 28px;
+  height: 10px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--surface-border);
+}
+
+.controls .colormap-picker > button svg {
+  margin-left: -2px;
+}
+
+.colormap-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  padding: 4px;
+}
+
+.colormap-menu[hidden] {
+  display: none;
+}
+
+.colormap-menu button {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.colormap-menu button:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+
+.colormap-menu button[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+
+.colormap-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
