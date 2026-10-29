@@ -106,7 +106,7 @@ The schema is the contract between Python and the frontend; it is versioned and 
 - `type` is a normalised vocabulary, not the framework's class name: `input`, `output`, `dense`, `conv1d`, `conv2d`, `pool`, `norm`, `activation`, `dropout`, `flatten`, `reshape`, `embedding`, `attention`, `recurrent`, `add`, `concat`, `custom`. Each adapter maps its framework's layers onto this list; unknown layers and system blocks become `custom` with a readable name in `label`.
 - Shapes exclude the batch dimension, and image-like tensors are channels-first, `[channels, height, width]`, whatever the framework (the Keras adapter converts from channels-last).
 - Layer parameters use one vocabulary across frameworks: conv `in_channels`, `out_channels`, `kernel_size`, `stride`, `padding` (`"valid"`, `"same"` or per-side amounts), `bias`; pool `mode`, `kernel_size`, `stride`, `padding`; norm `num_features`, `eps`; dropout `p`; dense `in_features`, `out_features`, `bias`. `param_count` counts learned parameters only (not BatchNorm running statistics).
-- `groups` form a tree via `parent`. A top-level group is one network: whenever the graph has top-level groups, the viewer opens on the system overview. Nested groups (ResNet blocks, transformer layers) drive collapse and expand in Phase 3.
+- `groups` form a tree via `parent`. A top-level group is one network: whenever the graph has top-level groups, the viewer opens on the system overview. Opening a group whose own children are groups (a ResNet stage, an autoencoder inside a System) shows another overview, one level down.
 - Edges may carry a `label`, shown on links between networks.
 - `weights` is optional and sampled; never ship full weight matrices. `pairs` are `[from_index, to_index, value]`.
 - Standalone activation modules (e.g. `nn.ReLU`) are folded into the previous layer's `activation` field by default (`fold_activations_into_layers=False` keeps them).
@@ -123,11 +123,11 @@ The schema is the contract between Python and the frontend; it is versioned and 
 | Framework deps | `torch`, `tensorflow` as optional extras (`pip install neurolume[torch]`) | Users install only what they need |
 | Frontend | TypeScript, Vite | Fast builds, single-file output for export |
 | Rendering | three.js r170 (`LineSegments`, `InstancedMesh`, CSS2D labels) | Tens of thousands of edges in one draw call; crisp HTML text |
-| Layout | Own column layout (single network) and ranked card layout (system overview); ELK.js for branching graphs in Phase 3 | Straight chains are easy; skip connections need a real layout engine |
+| Layout | Own column layout (one row in run order, skip edges as arcs) and ranked card layout (overviews) | Covers chains, skips and simple branches; ELK.js only if wide parallel graphs need it |
 | Tests | pytest; Vitest for pure frontend logic; headless Edge screenshots for "does it draw" | Covers adapters, schema, layout and appearance |
 | Qt integration | `QWebEngineView` from QtPy | Reuses the web viewer in the existing logger |
 
-**ELK.js** (Eclipse Layout Kernel) is a graph-layout library: given boxes and connections it assigns ranks, orders nodes to reduce crossings and routes edges. The current layouts only handle chains and simple fan-in/fan-out; ELK replaces them when a graph branches (ResNet skips, U-Net bridges, Inception branches). It is not installed yet.
+**ELK.js** (Eclipse Layout Kernel) is a graph-layout library: given boxes and connections it assigns ranks, orders nodes to reduce crossings and routes edges. Phase 3 found it unnecessary for ResNet-style models (one row plus arcs reads better there); it remains the option for wide parallel graphs.
 
 ```text
 neurolume/
@@ -159,7 +159,7 @@ neurolume/
 │       ├── ui/              # interaction, inspector, formatting
 │       └── theme.ts         # dark/light themes, colourmaps
 ├── scripts/                 # build_frontend.ps1, generate_schema_ts.py
-├── examples/                # mlp.py, cnn.py, keras_mlp.py, keras_cnn.py, demo.py, system.py, autoencoder.py (later resnet.py)
+├── examples/                # mlp.py, cnn.py, keras_*.py, demo.py, system.py, autoencoder.py, nested_system.py, branches.py, resnet.py
 └── tests/
 ```
 
@@ -214,14 +214,16 @@ Not in the original plan; added because large models are usually several network
 
 _Status (29 Oct 2026):_ passes. `examples/cnn.py` (PyTorch) and `examples/keras_cnn.py` (Keras) give identical node types, shapes, parameter counts, activations and parameters (`tests/test_keras_adapter.py`), and both render the same feature-map stacks (checked by screenshot). Keras was tested on its PyTorch backend, since TensorFlow has no Python 3.14 wheels yet; the adapter only uses the Keras API, so other backends should behave the same but are untested.
 
-### Phase 3 – Branching graphs and semantic zoom
+### Phase 3 – Branching graphs and semantic zoom ✅
 
-- [ ] Support `add` and `concat` nodes (skip connections).
-- [ ] Add ELK.js and use it when a network is not a straight chain; consider it for the system overview too once systems branch heavily.
-- [ ] Nested groups from module hierarchy below the top level (PyTorch) or nested models (Keras); collapse and expand on click. _Top-level grouping into networks is already done (Phase 1.5); this extends it downwards._
-- [ ] Start collapsed for models above a node threshold.
+- [x] Support `add` and `concat` nodes (skip connections). They stay thin bands; any edge that doesn't go to the very next layer is drawn as an arc under the panels into the layer it joins, with nesting lanes when arcs overlap.
+- [x] ~~Add ELK.js~~ **Revised:** not added. Layers stay in one row in the order they run, neighbouring columns are linked only where the signal really flows between them, and every other edge is an arc. That covers ResNet skips, downsample paths and two-way concats without a layout engine. Reconsider ELK for wide parallel graphs (4-branch Inception, U-Net) or heavily branching systems.
+- [x] Nested groups from the module hierarchy (PyTorch, from fx's `nn_module_stack`, so a residual `+` belongs to its block) and from nested models (Keras). **Revised:** instead of expanding in place, a group opens as its own view (click or zoom in), and Esc, zoom out or Overview goes back up one level. This reuses the system navigation and works at any depth, including Systems inside Systems.
+- [x] Start collapsed above a node threshold: a group is split into its parts only when it holds more than 8 layers (`NESTED_SPLIT_THRESHOLD`); loose layers before the first part and after the last become a "stem" and a "head". Overviews also hide card details below 0.8× zoom (semantic zoom).
 
 **Done when:** torchvision ResNet-18 opens as about 10 readable blocks and each expands to its layers.
+
+_Status (29 Oct 2026):_ passes. `examples/resnet.py` opens as Input → stem → layer1–4 → head → Output; each stage opens to its two blocks and each block to its layers, with the skip connection (and layer2–4's downsample path) drawn as arcs (checked by screenshot; group tree asserted in `tests/test_torch_adapter.py`). Keras nested models (`examples/keras_resnet.py`) behave the same, feature maps included. Known gaps: a Keras block built with `keras.Input((None, None, C))` has unknown sizes; flat Keras applications (e.g. `keras.applications.ResNet50`) are not grouped, since their blocks are only name prefixes.
 
 ### Phase 4 – Teaching and presentation features
 
@@ -275,11 +277,11 @@ The look comes from many faint lines, not from detail on any single element.
 | Conv2D | Stack of thin feature-map slabs; depth = channels (Phase 2) |
 | Pooling | Smaller slab stack, connected by a funnel shape (Phase 2) |
 | Norm, Dropout, Activation | Thin labelled band on the connection, not a full panel |
-| Add, Concat | Small merge node where branches join (Phase 3) |
+| Add, Concat | Thin labelled band where branches join; edges that skip layers arrive as arcs under the panels |
 | Attention (later) | Block of head tiles with an expandable attention matrix |
 | Network (system overview) | Card with a mini preview, name, param count and framework |
 | Block (system overview) | Small plain labelled card |
-| Group (collapsed, Phase 3) | One labelled panel with its param count |
+| Group (nested part, e.g. a ResNet stage or block) | A card in an overview, with its part or layer count and params; opens to its contents |
 
 **Interaction**
 
@@ -299,7 +301,7 @@ The look comes from many faint lines, not from detail on any single element.
 | Animation keeps weak GPUs busy | Render on demand only; any animation must be triggered and finite |
 | Keras and TF versions change APIs (Keras 3 vs tf.keras) | Target Keras 3 first; isolate version-specific code in the adapter |
 | Frontend bundle not shipped in the wheel, or half-copied | Build script verifies every referenced asset; add a CI check that `static/index.html` is in the wheel |
-| Large graphs unreadable on a slide | System overview (done); semantic zoom and default-collapsed groups (Phase 3) |
+| Large graphs unreadable on a slide | Overviews that open level by level, stem/head grouping, detail hidden when zoomed out (done in Phase 3) |
 
 **Open questions**
 
@@ -307,7 +309,7 @@ The look comes from many faint lines, not from detail on any single element.
 - Licence (MIT suggested for a teaching tool).
 - Should the viewer also accept a saved model file (ONNX, `.pt`, `.keras`) without Python code, like Netron?
 - Is 3D (orbit camera) wanted, or is a 2D view with depth effects enough? 2D for v1.
-- Should systems support links into a specific layer (not just output → input), e.g. for skip connections between networks?
+- Should systems support links into a specific layer (not just output → input), e.g. for skip connections between networks? Related: a System added to a System links to its first source and last sink; choosing another end (e.g. its loss block) is not possible yet.
 
 **Instructions for the coding assistant (Claude in VS Code)**
 
