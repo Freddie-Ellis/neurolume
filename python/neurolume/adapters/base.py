@@ -11,10 +11,11 @@ from ..system import System
 def detect_framework(model: Any) -> str:
     """Name the framework a model comes from, without importing that framework."""
     modules = {cls.__module__.split(".")[0] for cls in type(model).__mro__}
-    if "torch" in modules:
-        return "pytorch"
+    # Keras first: with the PyTorch backend, Keras models also subclass torch.nn.Module.
     if "keras" in modules or "tensorflow" in modules:
         return "keras"
+    if "torch" in modules:
+        return "pytorch"
     raise TypeError(f"unsupported model type {type(model).__name__}; expected a PyTorch or Keras model")
 
 
@@ -30,7 +31,9 @@ def to_graph(model: Any, example_input: Any = None, **options: Any) -> Graph:
         from .torch_adapter import from_torch
 
         return from_torch(model, example_input, **options)
-    raise NotImplementedError("the Keras adapter is planned for Phase 2")
+    from .keras_adapter import from_keras
+
+    return from_keras(model, example_input, **options)
 
 
 def fold_activations(nodes: list[GraphNode], edges: list[GraphEdge]) -> tuple[list[GraphNode], list[GraphEdge]]:

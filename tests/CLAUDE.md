@@ -2,12 +2,14 @@
 
 Run: `.venv/Scripts/python.exe -m pytest -q` from the repo root
 (`pythonpath = ["python"]` is set in `pyproject.toml`). Torch tests use
-`pytest.importorskip("torch")`.
+`pytest.importorskip("torch")`; Keras tests also skip without keras.
+`conftest.py` sets `KERAS_BACKEND=torch` before anything imports keras.
 
 | File | Covers |
 | --- | --- |
 | `test_schema.py` | Validation rules, API endpoints, **`schema.ts` is up to date** with the generator |
-| `test_torch_adapter.py` | MLP shapes/params, folding, weight sampling, fx fallback, JSON snapshot |
+| `test_torch_adapter.py` | MLP shapes/params, folding, weight sampling, fx fallback, JSON snapshot, LeNet conv/pool/norm params |
+| `test_keras_adapter.py` | PyTorch ≡ Keras for LeNet and the MLP, channels-first shapes, kernel transpose, functional branches, mixed-framework System |
 | `test_weights.py` | Top-k / random sampling |
 | `test_system.py` | `System` builder, blocks, name rules, examples/system.py, torch auto-grouping |
 | `test_demo.py` | Demo model goes through the adapter; fallback `demo_graph()` matches it |

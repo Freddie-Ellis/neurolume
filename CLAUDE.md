@@ -81,6 +81,8 @@ Headless Edge can screenshot the real viewer (WebGL via SwiftShader):
 - Wants a polished, "presentation-ready" look; references dense glowing
   neural-net renders (tall framed panels, organic tangled edges).
 - Rejected: continuous animations (GPU cost on an Intel iGPU), saturated blue
-  backgrounds. Liked: high-contrast dark/light themes, colourmap picker.
+  backgrounds, the generic "AI app" look (Inter, rounded pills, glass, purple).
+  Liked: high-contrast dark/light themes, colourmap picker, a technical-schematic
+  style (IBM Plex Sans/Mono, 2px corners, hairlines; see `frontend/CLAUDE.md`).
 - Visual tuning values (edge opacity, zoom thresholds) were chosen with the
   user; ask before changing them.

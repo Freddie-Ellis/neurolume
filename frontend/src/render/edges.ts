@@ -1,11 +1,13 @@
 /**
  * Edges between two columns: one LineSegments buffer of organic curves per
- * link. The geometry is static, so it is only redrawn when the view changes.
+ * link, or a funnel between two feature-map stacks. The geometry is static,
+ * so it is only redrawn when the view changes.
  */
 import * as THREE from "three";
 import type { LinkLayout } from "../layout/columns";
 import { linkSegments } from "../layout/columns";
 import { sampleCurve } from "../layout/curves";
+import { funnel } from "../layout/maps";
 import type { WeightSample } from "../schema";
 import type { Theme } from "../theme";
 
@@ -22,6 +24,7 @@ export interface EdgeBundle {
 }
 
 export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, theme: Theme): EdgeBundle {
+  if (link.from.maps && link.to.maps) return buildFunnel(link, theme);
   const { pairs, strength } = linkSegments(link, sample);
   const vertexCount = pairs.length * CURVE_SEGMENTS * 2;
   const positions = new Float32Array(vertexCount * 3);
@@ -43,7 +46,7 @@ export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, t
       handle: 0.25 + 0.5 * random(2),
       wave: { amplitude: (random(3) - 0.5) * 2 * waveLimit, cycles: 1 + 2 * random(4), phase: random(5) * Math.PI * 2 },
     };
-    const points = sampleCurve(link.from.x, link.from.slots[fromSlot], link.to.x, link.to.slots[toSlot], CURVE_SEGMENTS, shape);
+    const points = sampleCurve(link.from.exitX, link.from.slots[fromSlot], link.to.entryX, link.to.slots[toSlot], CURVE_SEGMENTS, shape);
     for (let s = 0; s < CURVE_SEGMENTS; s += 1) {
       for (const point of [points[s], points[s + 1]]) {
         positions.set([point.x, point.y, 0], vertex * 3);
@@ -69,6 +72,24 @@ export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, t
   });
   const lines = new THREE.LineSegments(geometry, material);
   lines.renderOrder = 1;
+  return { link, lines, baseOpacity };
+}
+
+/** Convolution and pooling: a kernel window on one stack, narrowing to a point on the next. */
+function buildFunnel(link: LinkLayout, theme: Theme): EdgeBundle {
+  const kernel = link.to.node.params["kernel_size"];
+  const segments = funnel(link.from.maps!, link.to.maps!, Array.isArray(kernel) ? (kernel as number[]) : [3, 3]);
+  const { r, g, b } = gradientColour(theme.edgeGradient, link.t);
+  const positions = segments.flatMap(([x0, y0, x1, y1]) => [x0, y0, 1.5, x1, y1, 1.5]);
+  const colours = segments.flatMap(() => [r, g, b, 1, r, g, b, 1]);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 4));
+  const baseOpacity = Math.min(1, 0.7 * theme.edgeOpacity);
+  const material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: baseOpacity, depthWrite: false });
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.renderOrder = 4; // over the slabs it starts and ends on
   return { link, lines, baseOpacity };
 }
 

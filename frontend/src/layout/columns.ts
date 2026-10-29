@@ -1,12 +1,15 @@
 /**
  * Column layout for chain-shaped graphs (Phase 1).
  *
- * Layers that hold neurons (input, dense, ...) become columns. Small layers
- * that only transform the signal (activation, dropout, flatten, ...) become
- * thin "bands" drawn on the connection between two columns. Everything here
- * is plain maths with no three.js, so it is easy to unit test.
+ * Layers that hold neurons (input, dense, ...) become columns. Layers whose
+ * output is a stack of feature maps (convolution, pooling, image inputs) are
+ * columns too, drawn as slabs (see maps.ts). Small layers that only transform
+ * the signal (activation, dropout, flatten, ...) become thin "bands" drawn on
+ * the connection between two columns. Everything here is plain maths with no
+ * three.js, so it is easy to unit test.
  */
 import type { Graph, GraphNode, NodeType, WeightSample } from "../schema";
+import { type MapStack, frontSlab, isMapShape, mapPorts, mapStack, stackExtent } from "./maps";
 
 export const MAX_NEURONS_SHOWN = 64;
 /** Tightest spacing between neurons, used by big layers. */
@@ -43,10 +46,15 @@ export interface ColumnLayout {
   x: number;
   /** True number of units in the layer. */
   units: number;
-  /** y position of each neuron that is drawn. */
+  /** y position of each neuron that is drawn, or where edges meet a feature-map stack. */
   slots: number[];
   /** y position of the "⋮" marker when some neurons are hidden, else null. */
   ellipsisY: number | null;
+  /** The feature-map stack, for [channels, height, width] outputs; null for neuron columns. */
+  maps: MapStack | null;
+  /** x where edges arrive and leave: the column itself, or the front slab's left and right edges. */
+  entryX: number;
+  exitX: number;
   panel: { left: number; right: number; top: number; bottom: number };
 }
 
@@ -76,6 +84,16 @@ export function isBand(node: GraphNode): boolean {
 }
 
 const product = (shape: number[]) => shape.reduce((total, size) => total * size, 1);
+
+/**
+ * Whether a layer is drawn as a stack of feature maps. An image input is only
+ * drawn that way when a convolution or pooling layer reads it; feeding an MLP,
+ * it stays a column of input neurons.
+ */
+function drawsMaps(node: GraphNode, next: GraphNode | undefined): boolean {
+  if (!isMapShape(node.output_shape)) return false;
+  return node.type !== "input" || (next !== undefined && isMapShape(next.output_shape));
+}
 
 /** Number of units a layer holds: the size of its output, without the batch dimension. */
 export function unitCount(node: GraphNode): number {
@@ -115,6 +133,7 @@ export function slotFor(index: number, units: number, shown: number): number {
 }
 
 export function layoutGraph(graph: Graph): Layout {
+  const columnNodes = graph.nodes.filter((node) => !isBand(node));
   const columns: ColumnLayout[] = [];
   const pendingBands: GraphNode[][] = [[]]; // bands after column i live in pendingBands[i + 1]
   const placeholder = { left: 0, right: 0, top: 0, bottom: 0 };
@@ -125,17 +144,29 @@ export function layoutGraph(graph: Graph): Layout {
       continue;
     }
     const units = unitCount(node);
-    const { slots, ellipsisY } = neuronSlots(units);
-    columns.push({ node, index: columns.length, x: columns.length * COLUMN_SPACING, units, slots, ellipsisY, panel: placeholder });
+    const x = columns.length * COLUMN_SPACING;
+    const index = columns.length;
+    if (drawsMaps(node, columnNodes[index + 1])) {
+      const maps = mapStack(node.output_shape, x);
+      const front = frontSlab(maps);
+      const ports = mapPorts(maps);
+      columns.push({ node, index, x, units, slots: ports, ellipsisY: null, maps, entryX: front.left, exitX: front.left + front.width, panel: placeholder });
+    } else {
+      const { slots, ellipsisY } = neuronSlots(units);
+      columns.push({ node, index, x, units, slots, ellipsisY, maps: null, entryX: x, exitX: x, panel: placeholder });
+    }
     pendingBands.push([]);
   }
 
   // Every panel gets the height of the tallest column (and at least
   // MIN_NEURON_EXTENT), so the panels line up as one row of equal, tall frames.
   // Smaller layers then spread their neurons out to fill more of that height.
-  const naturalExtent = Math.max(...columns.flatMap((column) => column.slots.map(Math.abs)));
+  const naturalExtent = Math.max(
+    ...columns.map((column) => (column.maps ? stackExtent(column.maps) : Math.max(...column.slots.map(Math.abs)))),
+  );
   const neuronExtent = Math.max(MIN_NEURON_EXTENT, naturalExtent);
   for (const column of columns) {
+    if (column.maps) continue; // stacks keep their own size
     const fill = (neuronExtent * 2 * 0.85) / spacingSteps(column.units);
     const spacing = Math.min(MAX_NEURON_SPACING, Math.max(NEURON_SPACING, fill));
     Object.assign(column, neuronSlots(column.units, MAX_NEURONS_SHOWN, spacing));

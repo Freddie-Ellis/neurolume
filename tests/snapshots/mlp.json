@@ -35,10 +35,7 @@
       "output_shape": [
         784
       ],
-      "params": {
-        "start_dim": 1,
-        "end_dim": -1
-      },
+      "params": {},
       "param_count": 0,
       "activation": null,
       "notes": null

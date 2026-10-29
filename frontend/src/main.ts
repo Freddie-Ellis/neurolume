@@ -1,13 +1,14 @@
-import "@fontsource-variable/inter";
+import "@fontsource-variable/ibm-plex-sans";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
 import * as THREE from "three";
 import "./style.css";
 import { layoutGraph } from "./layout/columns";
 import { isSystem, layoutSystem, subgraph } from "./layout/system";
 import { type Network, buildNetwork, disposeNetwork, escapeHtml } from "./render/network";
-import { buildNote } from "./render/note";
 import { buildSystem } from "./render/system";
 import { type Bounds, Viewer } from "./render/viewer";
-import { SCHEMA_VERSION, type Graph, type GraphNode } from "./schema";
+import { SCHEMA_VERSION, type Graph } from "./schema";
 import {
   type Theme,
   colormapCss,
@@ -32,10 +33,19 @@ declare global {
 
 const ICONS = {
   back: '<path d="M10 3L5 8l5 5"/>',
-  chevron: '<path d="M4 6l4 4 4-4"/>',
-  fit: '<path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>',
-  theme: '<circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor"/>',
+  settings: '<path d="M2 5h7M13 5h1M2 11h1M7 11h7"/><circle cx="11" cy="5" r="2"/><circle cx="5" cy="11" r="2"/>',
 };
+
+/** The mouse and keyboard reference shown in the settings panel: action, then input. */
+const CONTROLS: [string, string][] = [
+  ["Zoom", "Scroll"],
+  ["Pan", "Drag"],
+  ["Layer or block details", "Click"],
+  ["Open a network", "Click / zoom in"],
+  ["Back to the overview", "Zoom out / Esc"],
+  ["Fit to screen", "Double-click / F"],
+  ["Light or dark", "T"],
+];
 
 function icon(name: keyof typeof ICONS): string {
   return `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -52,17 +62,13 @@ async function loadGraph(): Promise<Graph> {
 const ZOOM_OUT_TO_PARENT = 0.5;
 /** Zooming into a network card until it fills this fraction of the screen opens it. */
 const ZOOM_IN_FILL = 0.6;
-/** A note is fitted as if it were this tall, so short notes aren't blown up and long ones open at the top. */
-const NOTE_FIT_HEIGHT = 860;
 /** After opening a network from the overview, scroll zooming is ignored this long. */
 const ZOOM_PAUSE_MS = 300;
 
-/** One screen: the system overview, the detailed view of one network, or a block's notes. */
+/** One screen: either the system overview or the detailed view of one network. */
 interface View {
-  kind: "system" | "network" | "note";
+  kind: "system" | "network";
   graph: Graph;
-  /** The block whose notes a "note" view shows. */
-  node?: GraphNode;
   bounds: Bounds;
   /** Where Esc and the Back button go, or null at the top level. */
   parent: View | null;
@@ -81,22 +87,9 @@ function systemView(graph: Graph, open: (view: View) => void): View {
     graph,
     bounds: layout.bounds,
     parent: null,
-    build: (theme) =>
-      buildSystem(layout, theme, {
-        network: (groupId) => open(networkView(subgraph(graph, groupId), view)),
-        note: (node) => void noteView(node, view).then(open, (error: unknown) => console.error(error)),
-      }),
+    build: (theme) => buildSystem(layout, theme, (groupId) => open(networkView(subgraph(graph, groupId), view))),
   };
   return view;
-}
-
-async function noteView(node: GraphNode, parent: View): Promise<View> {
-  const { notePage } = await import("./ui/notes"); // Markdown + KaTeX load on first use
-  const page = await notePage(node);
-  // Centre a short page vertically; line a long one up with the top of the screen.
-  const top = Math.max(0, NOTE_FIT_HEIGHT - page.height) / 2;
-  const bounds = { left: 0, right: page.width, top, bottom: top - NOTE_FIT_HEIGHT };
-  return { kind: "note", graph: parent.graph, node, bounds, parent, build: (theme) => buildNote(page, theme) };
 }
 
 /**
@@ -182,14 +175,6 @@ class Stage {
 }
 
 function renderTitleCard(card: HTMLElement, view: View, system: Graph): void {
-  if (view.kind === "note" && view.node) {
-    const description = view.node.params["description"];
-    card.innerHTML = `
-      <p class="eyebrow">Notes · in ${escapeHtml(system.model.name)}</p>
-      <h1>${escapeHtml(view.node.label)}</h1>
-      ${typeof description === "string" ? `<p class="title-meta"><span>${escapeHtml(description)}</span></p>` : ""}`;
-    return;
-  }
   const { model, nodes, groups } = view.graph;
   const stats =
     view.kind === "system"
@@ -205,13 +190,6 @@ function renderTitleCard(card: HTMLElement, view: View, system: Graph): void {
     </p>`;
 }
 
-function hintFor(view: View): string {
-  if (view.kind === "system") return "Click or zoom into a card to open it · Drag to pan · Double-click empty space to fit";
-  if (view.kind === "note") return "Zoom out or press Esc to go back · Drag to pan · Scroll to zoom";
-  const back = view.parent ? "Zoom out or press Esc to go back · " : "";
-  return `${back}Drag to pan · Scroll to zoom · Click a layer for details · Double-click empty space to fit`;
-}
-
 function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButtonElement {
   let base = themes[initial.name];
   let colormap = initialColormap(base.name);
@@ -220,72 +198,82 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
   controls.setAttribute("aria-label", "View controls");
   controls.innerHTML = `
     <button data-action="back" title="Back to the overview (Esc)" hidden>${icon("back")}<span>Overview</span></button>
-    <button data-action="fit" title="Fit to screen (F, or double-click empty space)">${icon("fit")}<span>Fit</span></button>
-    <div class="colormap-picker">
-      <button data-action="colormap" title="Edge colours" aria-haspopup="listbox" aria-expanded="false">
-        <span class="swatch"></span><span class="colormap-name"></span>${icon("chevron")}
-      </button>
-      <div class="colormap-menu surface" role="listbox" aria-label="Edge colours" hidden></div>
-    </div>
-    <button data-action="theme" title="Switch light and dark (T)">${icon("theme")}<span></span></button>`;
+    <div class="settings">
+      <button data-action="settings" aria-haspopup="dialog" aria-expanded="false">${icon("settings")}<span>Settings</span></button>
+      <div class="settings-panel surface" role="dialog" aria-label="Settings" hidden></div>
+    </div>`;
   const backButton = controls.querySelector<HTMLButtonElement>('[data-action="back"]')!;
-  const themeButton = controls.querySelector<HTMLButtonElement>('[data-action="theme"]')!;
-  const colormapButton = controls.querySelector<HTMLButtonElement>('[data-action="colormap"]')!;
-  const menu = controls.querySelector<HTMLElement>(".colormap-menu")!;
+  const settingsButton = controls.querySelector<HTMLButtonElement>('[data-action="settings"]')!;
+  const panel = controls.querySelector<HTMLElement>(".settings-panel")!;
 
-  const apply = () => stage.setTheme(withColormap(base, colormap));
   const render = () => {
-    themeButton.querySelector("span")!.textContent = base.name === "dark" ? "Light" : "Dark";
-    colormapButton.querySelector<HTMLElement>(".swatch")!.style.background = colormapCss(colormap);
-    colormapButton.querySelector(".colormap-name")!.textContent = colormap.name;
-    menu.innerHTML = colormaps[base.name]
-      .map(
-        (option) => `
-        <button role="option" data-colormap="${escapeHtml(option.name)}" aria-selected="${option.name === colormap.name}">
-          <span class="swatch" style="background: ${colormapCss(option)}"></span>${escapeHtml(option.name)}
-        </button>`,
-      )
-      .join("");
+    const option = (selected: boolean, data: string, content: string) =>
+      `<button role="radio" ${data} aria-checked="${selected}">${content}</button>`;
+    panel.innerHTML = `
+      <section>
+        <h3>Theme</h3>
+        <div class="segmented" role="radiogroup" aria-label="Theme">
+          ${option(base.name === "dark", 'data-theme-name="dark"', "Dark")}
+          ${option(base.name === "light", 'data-theme-name="light"', "Light")}
+        </div>
+      </section>
+      <section>
+        <h3>Edge colours</h3>
+        <div class="colormap-list" role="radiogroup" aria-label="Edge colours">
+          ${colormaps[base.name]
+            .map((candidate) =>
+              option(
+                candidate.name === colormap.name,
+                `data-colormap="${escapeHtml(candidate.name)}"`,
+                `<span class="swatch" style="background: ${colormapCss(candidate)}"></span>${escapeHtml(candidate.name)}`,
+              ),
+            )
+            .join("")}
+        </div>
+      </section>
+      <section>
+        <h3>Controls</h3>
+        <dl class="shortcuts">${CONTROLS.map(([action, input]) => `<dt>${action}</dt><dd>${input}</dd>`).join("")}</dl>
+      </section>`;
   };
-  const setMenuOpen = (open: boolean) => {
-    menu.hidden = !open;
-    colormapButton.setAttribute("aria-expanded", String(open));
+  const setOpen = (open: boolean) => {
+    panel.hidden = !open;
+    settingsButton.setAttribute("aria-expanded", String(open));
   };
 
-  const toggleTheme = () => {
-    base = base.name === "dark" ? themes.light : themes.dark;
+  const setTheme = (name: Theme["name"]) => {
+    if (name === base.name) return;
+    base = themes[name];
     colormap = initialColormap(base.name); // each theme remembers its own colourmap
     saveTheme(base);
-    apply();
+    stage.setTheme(withColormap(base, colormap));
     render();
   };
 
-  colormapButton.addEventListener("click", () => setMenuOpen(menu.hidden));
-  menu.addEventListener("click", (event) => {
-    const option = (event.target as HTMLElement).closest<HTMLElement>("[data-colormap]");
-    const chosen = colormaps[base.name].find((candidate) => candidate.name === option?.dataset.colormap);
+  settingsButton.addEventListener("click", () => setOpen(panel.hidden));
+  panel.addEventListener("click", (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>("button");
+    if (target?.dataset.themeName === "dark" || target?.dataset.themeName === "light") setTheme(target.dataset.themeName);
+    const chosen = colormaps[base.name].find((candidate) => candidate.name === target?.dataset.colormap);
     if (!chosen) return;
     colormap = chosen;
     saveColormap(base.name, colormap);
-    apply();
+    stage.setTheme(withColormap(base, colormap));
     render();
-    setMenuOpen(false);
   });
   document.addEventListener("pointerdown", (event) => {
-    if (!menu.hidden && !controls.contains(event.target as Node)) setMenuOpen(false);
+    if (!panel.hidden && !controls.contains(event.target as Node)) setOpen(false);
   });
 
   backButton.addEventListener("click", () => stage.back());
-  controls.querySelector('[data-action="fit"]')!.addEventListener("click", () => stage.fit());
-  themeButton.addEventListener("click", toggleTheme);
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !menu.hidden) {
-      // Close the menu only; don't also leave the network or close the inspector.
-      setMenuOpen(false);
+    if (event.key === "Escape" && !panel.hidden) {
+      // Close the panel only; don't also leave the network or close the inspector.
+      setOpen(false);
       event.stopImmediatePropagation();
     }
     if (event.key === "f") stage.fit();
-    if (event.key === "t") toggleTheme();
+    if (event.key === "t") setTheme(base.name === "dark" ? "light" : "dark");
   });
   render();
   app.append(controls);
@@ -312,8 +300,6 @@ async function main(): Promise<void> {
 
   const titleCard = document.createElement("header");
   titleCard.className = "title-card surface";
-  const hint = document.createElement("p");
-  hint.className = "hint";
 
   let stage: Stage | null = null;
   let backButton: HTMLButtonElement | null = null;
@@ -324,12 +310,11 @@ async function main(): Promise<void> {
     tooltip,
     (view) => {
       renderTitleCard(titleCard, view, graph);
-      hint.textContent = hintFor(view);
       if (backButton) backButton.hidden = view.parent === null;
     },
     theme,
   );
-  app.append(titleCard, hint);
+  app.append(titleCard);
   backButton = buildControls(app, stage, theme);
 
   const open = (view: View) => stage?.show(view);

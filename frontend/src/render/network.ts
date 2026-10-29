@@ -1,7 +1,8 @@
 /**
  * Turns a Layout into three.js objects: a framed panel per column, all
- * neurons in one InstancedMesh, and one LineSegments buffer of edges per link.
- * Text is drawn as HTML (CSS2DObject) so it stays crisp at any zoom.
+ * neurons in one InstancedMesh, a stack of slabs for each feature-map column,
+ * and one LineSegments buffer of edges per link. Text is drawn as HTML
+ * (CSS2DObject) so it stays crisp at any zoom.
  */
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
@@ -9,10 +10,10 @@ import { type BandLayout, type ColumnLayout, type Layout, isBand } from "../layo
 import type { Graph, GraphNode } from "../schema";
 import type { Theme } from "../theme";
 import { formatActivation, formatCount, formatShape } from "../ui/format";
-import { type EdgeBundle, buildEdges } from "./edges";
+import { type EdgeBundle, buildEdges, gradientColour } from "./edges";
 
 const NEURON_RADIUS = 3.2;
-const PANEL_RADIUS = 6;
+const PANEL_RADIUS = 2;
 const BAND_HIT_WIDTH = 24;
 
 /** Anything the mouse can hover or click: a column panel or a band. */
@@ -55,7 +56,11 @@ export function buildNetwork(layout: Layout, graph: Graph, theme: Theme): Networ
     root.add(pickable.mesh, pickable.outline, chip);
     pickables.push(pickable);
   }
-  root.add(buildNeurons(layout.columns, theme), buildEllipses(layout.columns, theme));
+  const neuronColumns = layout.columns.filter((column) => !column.maps);
+  root.add(buildNeurons(neuronColumns, theme), buildEllipses(neuronColumns, theme));
+  for (const column of layout.columns) {
+    if (column.maps) root.add(buildSlabs(column, columnPosition(column, layout.columns.length), theme));
+  }
 
   return { root, pickables, edges, theme };
 }
@@ -89,6 +94,51 @@ function buildNeurons(columns: ColumnLayout[], theme: Theme): THREE.InstancedMes
   }
   neurons.renderOrder = 3;
   return neurons;
+}
+
+/** Where a column sits along the colour gradient, matching the edges that arrive at it. */
+function columnPosition(column: ColumnLayout, columnCount: number): number {
+  return columnCount > 2 ? Math.max(0, column.index - 1) / (columnCount - 2) : 0;
+}
+
+/**
+ * One feature-map stack: opaque slabs, back to front, so each hides the one
+ * behind it, outlined in the layer's colour. Back slabs fade, so the front
+ * one (where the funnels start and end) reads first.
+ */
+function buildSlabs(column: ColumnLayout, t: number, theme: Theme): THREE.Group {
+  const slabs = column.maps!.slabs;
+  const colour = gradientColour(theme.edgeGradient, t);
+  const fill = new THREE.Color(theme.panelFill); // untinted: the outlines carry the layer colour
+  const group = new THREE.Group();
+
+  const positions: number[] = [];
+  const colours: number[] = [];
+  slabs.forEach(({ left, bottom, width, height }, i) => {
+    const z = 0.5 + i * 0.02;
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, height).translate(left + width / 2, bottom + height / 2, z),
+      new THREE.MeshBasicMaterial({ color: fill }),
+    );
+    group.add(plane);
+
+    const alpha = slabs.length > 1 ? 0.35 + (0.65 * i) / (slabs.length - 1) : 1;
+    const [right, top] = [left + width, bottom + height];
+    const corners = [[left, bottom], [right, bottom], [right, top], [left, top]];
+    corners.forEach(([x0, y0], k) => {
+      const [x1, y1] = corners[(k + 1) % 4];
+      positions.push(x0, y0, z + 0.01, x1, y1, z + 0.01);
+      colours.push(colour.r, colour.g, colour.b, alpha, colour.r, colour.g, colour.b, alpha);
+    });
+  });
+
+  const outlines = new THREE.BufferGeometry();
+  outlines.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  outlines.setAttribute("color", new THREE.Float32BufferAttribute(colours, 4));
+  const lines = new THREE.LineSegments(outlines, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true }));
+  lines.renderOrder = 3;
+  group.add(lines);
+  return group;
 }
 
 /** Three small dots in the gap of every column that hides some neurons. */
@@ -172,6 +222,7 @@ function bandText(node: GraphNode): string {
   if (node.type === "output") return "Output";
   if (node.type === "dropout" && typeof node.params["p"] === "number") return `Dropout ${node.params["p"]}`;
   if (node.type === "activation") return formatActivation(node.activation) || node.label;
+  if (node.type === "norm" && node.label.startsWith("BatchNorm")) return "BatchNorm"; // Keras: BatchNormalization
   return node.label;
 }
 

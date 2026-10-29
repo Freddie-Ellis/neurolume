@@ -263,7 +263,34 @@ def _module_node(node_id: str, module: nn.Module, input_shape: list[int], output
         params = {"p": module.p}
     elif isinstance(module, nn.Flatten):
         node_type = "flatten"
-        params = {"start_dim": module.start_dim, "end_dim": module.end_dim}
+    elif isinstance(module, (nn.Conv1d, nn.Conv2d)):
+        node_type = "conv1d" if isinstance(module, nn.Conv1d) else "conv2d"
+        params = {
+            "in_channels": module.in_channels,
+            "out_channels": module.out_channels,
+            "kernel_size": list(module.kernel_size),
+            "stride": list(module.stride),
+            "padding": _padding(module.padding, module.kernel_size, module.stride),
+            "bias": module.bias is not None,
+        }
+    elif isinstance(module, (nn.MaxPool1d, nn.MaxPool2d, nn.AvgPool1d, nn.AvgPool2d)):
+        node_type = "pool"
+        dims = 1 if isinstance(module, (nn.MaxPool1d, nn.AvgPool1d)) else 2
+        kernel = _pair(module.kernel_size, dims)
+        stride = _pair(module.stride or module.kernel_size, dims)
+        params = {
+            "mode": "max" if isinstance(module, (nn.MaxPool1d, nn.MaxPool2d)) else "avg",
+            "kernel_size": kernel,
+            "stride": stride,
+            "padding": _padding(_pair(module.padding, dims), kernel, stride),
+        }
+    elif isinstance(module, (nn.AdaptiveAvgPool1d, nn.AdaptiveAvgPool2d, nn.AdaptiveMaxPool1d, nn.AdaptiveMaxPool2d)):
+        node_type = "pool"
+        mode = "max" if isinstance(module, (nn.AdaptiveMaxPool1d, nn.AdaptiveMaxPool2d)) else "avg"
+        params = {"mode": mode, "output_size": module.output_size}
+    elif isinstance(module, nn.modules.batchnorm._BatchNorm):
+        node_type = "norm"
+        params = {"num_features": module.num_features, "eps": module.eps}
 
     return GraphNode(
         id=node_id,
@@ -275,6 +302,27 @@ def _module_node(node_id: str, module: nn.Module, input_shape: list[int], output
         param_count=sum(parameter.numel() for parameter in module.parameters()),
         activation=activation,
     )
+
+
+def _pair(value: int | tuple[int, ...], dims: int) -> list[int]:
+    """`2` -> `[2, 2]`, so kernel sizes and strides always have one entry per spatial dimension."""
+    return list(value) if isinstance(value, tuple) else [value] * dims
+
+
+def _padding(padding: str | tuple[int, ...] | list[int], kernel: tuple[int, ...] | list[int], stride: tuple[int, ...] | list[int]) -> str | list[int]:
+    """Describe padding the way Keras does where they mean the same thing.
+
+    No padding is ``"valid"``; padding that keeps the size of an odd kernel at
+    stride 1 is ``"same"``; anything else stays a list of per-side amounts.
+    """
+    if isinstance(padding, str):
+        return padding
+    amounts = list(padding)
+    if all(amount == 0 for amount in amounts):
+        return "valid"
+    if all(s == 1 and k % 2 == 1 and p == (k - 1) // 2 for p, k, s in zip(amounts, kernel, stride)):
+        return "same"
+    return amounts
 
 
 def _describe_call(fx_node: fx.Node) -> tuple[NodeType, str | None]:
@@ -301,6 +349,8 @@ def _describe_call(fx_node: fx.Node) -> tuple[NodeType, str | None]:
         return "add", None
     if target is torch.cat:
         return "concat", None
+    if target in (F.max_pool1d, F.max_pool2d, F.avg_pool1d, F.avg_pool2d, F.adaptive_avg_pool2d):
+        return "pool", None
     return "custom", None
 
 

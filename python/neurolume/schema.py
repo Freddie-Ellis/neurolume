@@ -1,6 +1,8 @@
 """Framework-independent graph data used by the viewer.
 
 This module is the contract between the Python adapters and the frontend.
+Shapes exclude the batch dimension and are channels-first for images
+([channels, height, width]) whatever the framework.
 Any change here must bump ``SCHEMA_VERSION`` and regenerate
 ``frontend/src/schema.ts`` with ``python scripts/generate_schema_ts.py``.
 """

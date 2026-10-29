@@ -7,7 +7,8 @@
 | `__init__.py` | Public API: `show`, `show_demo`, `to_graph`, `System`, `Component`, `Graph`, `Viewer`, `SCHEMA_VERSION` |
 | `schema.py` | Pydantic models = the JSON contract. `Graph` validates that edges/groups/weights reference real ids |
 | `adapters/base.py` | `to_graph()` dispatch (Graph → as-is, System → `.to_graph()`, torch → adapter), `fold_activations()` |
-| `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks |
+| `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, Dropout, Flatten |
+| `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling |
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
 | `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=)` |
 | `server.py` | FastAPI app, `show()` (background thread, free port), `demo_graph()` fallback |
@@ -15,7 +16,11 @@
 
 ## Graph conventions
 
-- Shapes **exclude the batch dimension**.
+- Shapes **exclude the batch dimension** and are **channels-first** for images.
+- **One parameter vocabulary for both frameworks** (see the plan, section 3):
+  `tests/test_keras_adapter.py` checks LeNet and the MLP are identical in
+  PyTorch and Keras. Torch padding that equals "same" is reported as `"same"`;
+  Keras BatchNorm moving statistics are not counted as parameters.
 - Node `type` is the normalised vocabulary in `schema.NodeType` (`dense`,
   `activation`, `dropout`, `flatten`, ...); unknown layers are `custom` with the
   class name in `label`.
@@ -33,7 +38,7 @@
   blocks are ungrouped `custom` nodes; links are ordinary edges (with optional
   `label`) from a network's last `output` node to the next one's first `input`.
 - Block `notes` (schema 1.2, `GraphNode.notes`) is Markdown with `$...$` /
-  `$$...$$` LaTeX, dedented with `inspect.cleandoc`; the viewer opens it as a page.
+  `$$...$$` LaTeX, dedented with `inspect.cleandoc`; the viewer shows it in the inspector when the block is clicked.
 - torch auto-grouping (`group_submodules=None` → auto): nodes are grouped by the
   top-level child module that owns them, when ≥2 children each hold ≥2 layers.
   Identity of modules is matched via `named_modules()`.
@@ -45,8 +50,10 @@
 - **Schema change**: edit `schema.py`, bump `SCHEMA_VERSION`, run
   `scripts/generate_schema_ts.py`, delete and regenerate `tests/snapshots/mlp.json`
   (the snapshot test rewrites it when missing).
-- **Keras adapter** (planned): `adapters/keras_adapter.py`, dispatched from
-  `base.to_graph()`; keep keras imports inside that module.
+- **Keras**: keep keras imports inside `keras_adapter.py`. On the PyTorch
+  backend a Keras model is also a `torch.nn.Module`, so `detect_framework`
+  checks Keras **first**. Tests run on `KERAS_BACKEND=torch` (`tests/conftest.py`);
+  TensorFlow has no Python 3.14 wheels.
 
 ## Gotchas
 

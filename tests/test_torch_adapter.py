@@ -89,3 +89,33 @@ def test_mlp_matches_snapshot() -> None:
         snapshot.parent.mkdir(exist_ok=True)
         snapshot.write_text(json.dumps(actual, indent=2) + "\n", encoding="utf-8")
     assert actual == json.loads(snapshot.read_text(encoding="utf-8"))
+
+
+def test_lenet_conv_pool_and_norm_layers() -> None:
+    from cnn import LeNet
+
+    graph = to_graph(LeNet(), torch.randn(1, 1, 28, 28), weights=None)
+    nodes = {node.id: node for node in graph.nodes}
+    assert [node.type for node in graph.nodes] == [
+        "input", "conv2d", "pool", "conv2d", "norm", "pool", "flatten", "dense", "dropout", "dense", "dense", "output",
+    ]
+    # Shapes are channels-first and exclude the batch dimension.
+    assert [nodes[name].output_shape for name in ("conv1", "pool1", "conv2", "pool2")] == [
+        [6, 28, 28], [6, 14, 14], [16, 10, 10], [16, 5, 5],
+    ]
+    assert nodes["conv1"].params == {
+        "in_channels": 1, "out_channels": 6, "kernel_size": [5, 5], "stride": [1, 1], "padding": "same", "bias": True,
+    }
+    assert nodes["conv2"].params["padding"] == "valid"
+    assert nodes["pool1"].params == {"mode": "max", "kernel_size": [2, 2], "stride": [2, 2], "padding": "valid"}
+    # BatchNorm counts its weight and bias, not its running statistics (buffers).
+    assert (nodes["norm2"].params, nodes["norm2"].param_count, nodes["norm2"].activation) == (
+        {"num_features": 16, "eps": 1e-5}, 32, "relu",
+    )
+    assert graph.model.total_params == 61_738
+
+
+def test_padding_that_is_not_same_stays_explicit() -> None:
+    graph = to_graph(nn.Sequential(nn.Conv2d(3, 8, 3, stride=2, padding=1)), torch.randn(1, 3, 32, 32))
+    conv = next(node for node in graph.nodes if node.type == "conv2d")
+    assert (conv.params["padding"], conv.output_shape) == ([1, 1], [8, 16, 16])

@@ -9,22 +9,22 @@ from the repo root. The user refreshes the browser; no Python restart needed.
 
 | File | What it does |
 | --- | --- |
-| `main.ts` | Entry. `View` (system overview, one network, or a block's notes; `noteView()` lazy-imports `ui/notes`), `Stage` (shows a view, rebuilds on theme change, back/fit, zoom-in/zoom-out navigation), title card, controls (Overview, Fit, colourmap picker, Light/Dark), keyboard |
+| `main.ts` | Entry. `View` (system overview or one network), `Stage` (shows a view, rebuilds on theme change, back/fit, zoom-in/zoom-out navigation), title card, controls (Overview when nested, Settings panel with theme, edge colourmap and the `CONTROLS` reference), keyboard (f, t, Esc) |
 | `schema.ts` | **Generated** from pydantic — never edit by hand |
 | `theme.ts` | `themes` (dark/light), `colormaps` (5 per theme), localStorage helpers, `withColormap()` |
 | `layout/columns.ts` | Single-network layout: which nodes are columns vs bands, neuron slots (cap 64, ellipsis gap), tall equal-height panels, `linkSegments()` (weights → visible pairs) |
+| `layout/maps.ts` | Feature-map stacks for `[C, H, W]` layers: `mapStack()` slabs (≤12, sized by H×W), `mapPorts()`, `funnel()` (kernel window → point). An image input only becomes a stack when the next layer is also maps, so MLPs keep an input neuron column |
 | `layout/curves.ts` | `sampleCurve()`: Bézier with random `bend`/`handle` and a pinned `wave` ripple |
 | `layout/system.ts` | `isSystem()`, `layoutSystem()` (cards, ranks by longest path, barycenter ordering), `subgraph()` (one group as a standalone graph, adds synthetic input/output), `strandCount()`/`strandSlots()` for links |
 | `render/viewer.ts` | three.js renderer, ortho camera (1 world unit = 1 CSS px at zoom 1), pan/zoom, bloom, render-on-demand, `onUserZoom`, `pauseZoom()` |
 | `render/network.ts` | Detailed view: panels, bands, neurons, labels, `titleFor()`/`nameLayers()`, `setHighlight()`, `disposeNetwork()` |
-| `render/edges.ts` | Edge `LineSegments` per link (RGBA: colour from gradient, alpha from weight strength) |
-| `render/note.ts` | Note page in the scene: a CSS2DObject whose page rescales itself by camera zoom in `onBeforeRender` |
-| `render/system.ts` | Overview: cards with mini previews, links as bundles of strands (one per tensor value, cap 48; ribbon + arrowhead only when the shape is unknown), link chips; network cards and blocks with `notes` get `activate` (handlers in `OpenHandlers`) |
+| `render/edges.ts` | Edge `LineSegments` per link (RGBA: colour from gradient, alpha from weight strength); stack→stack links are funnels. Edges leave at `exitX` and arrive at `entryX` |
+| `render/system.ts` | Overview: cards with mini previews, links as bundles of strands (one per tensor value, cap 48; ribbon + arrowhead only when the shape is unknown), link chips; network cards get `activate`; blocks open the inspector, with a "Notes" hint when they have notes |
 | `ui/interaction.ts` | Hover/tooltip/click/dblclick; `pickAt()`; listeners use an AbortController (`detach()`) |
-| `ui/inspector.ts` | Right-hand layer details panel |
-| `ui/notes.ts` | Markdown → sanitised HTML (marked + marked-katex-extension + DOMPurify), `notePage()` measures it off-screen. **Dynamically imported** so KaTeX isn't in the main bundle |
+| `ui/inspector.ts` | Right-hand layer details panel; System blocks get a Block header and a Notes section |
+| `ui/notes.ts` | Markdown → sanitised HTML (marked + marked-katex-extension + DOMPurify), **dynamically imported** by the inspector so KaTeX isn't in the main bundle |
 | `ui/format.ts` | Number/shape/activation/framework formatting |
-| `style.css` | Tokens per `[data-theme]`, labels, cards, controls, inspector, colourmap menu |
+| `style.css` | Tokens per `[data-theme]` (`--radius` 2px, `--mono`), labels, cards, segmented toolbar, inspector, colourmap menu, `.notes` |
 
 ## Key design decisions (don't undo without asking)
 
@@ -45,11 +45,27 @@ from the repo root. The user refreshes the browser; no Python restart needed.
   "wait until the scroll gesture ends" version was tried and rejected: it never
   released while the user kept scrolling.
 
+- No Fit button and no hint line at the bottom: the user moved theme,
+  colourmap and the controls reference into the Settings panel. Fit is still
+  `f` / double-click empty space.
+- **Visual style: technical schematic** (chosen by the user to look less
+  "AI-generated"). IBM Plex Sans for text, Plex Mono (`var(--mono)`) for
+  numbers, shapes and small uppercase labels; 2px corners everywhere (scene:
+  `PANEL_RADIUS`/`CARD_RADIUS` = 2); solid surfaces with hairline borders, no
+  backdrop blur, no soft shadows; neutral ink accent, so the edge colourmap is
+  the only colour. Avoid reintroducing pills, big radii, glass or purple accents.
+
 ## Gotchas
 
-- Note pages live in the `.labels` layer, so they have `pointer-events: none`:
-  links in notes aren't clickable and text can't be selected (wheel/drag must
-  reach the canvas for zoom navigation).
+- three.js mixes colours in linear space: even a 5% tint of a bright colour
+  into a dark fill comes out visibly brown. Slab fills are untinted for that reason.
+
+- CSS2D labels keep their pixel size while the scene zooms, so anything that
+  must sit at a card edge (e.g. the "Notes" hint) needs its own label anchored
+  there (`center.set(1, 1)` = bottom-right), not flex layout inside one label.
+
+- Block notes are shown **only in the inspector**. A zoomable note page was
+  tried and rejected by the user; don't add zoom-in navigation for blocks.
 
 - Neuron ids in systems are prefixed (`encoder/0`); always display names via
   `titleFor()`, which strips prefixes and numbers Sequential children in drawing order.

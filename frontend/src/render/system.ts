@@ -2,19 +2,18 @@
  * Draws a SystemLayout: a card per network or block, a mini neuron preview
  * inside each network card, and labelled bundles of strands between cards. It returns the
  * same Network shape as the detailed view, so hover, tooltips and the
- * inspector work unchanged; network cards, and blocks with notes, open on
- * click via `activate`.
+ * inspector work unchanged; network cards open on click via `activate`.
+ * Clicking a block opens the inspector, which also shows its notes.
  */
 import * as THREE from "three";
 import { sampleCurve } from "../layout/curves";
 import { type Card, type CardLink, type SystemLayout, strandCount, strandSlots } from "../layout/system";
-import type { GraphNode } from "../schema";
 import type { Theme } from "../theme";
 import { formatCount, formatFramework, formatParams, formatShape } from "../ui/format";
 import { gradientColour, pseudoRandom } from "./edges";
 import { type Network, type Pickable, escapeHtml, label, roundedRect, titleFor } from "./network";
 
-const CARD_RADIUS = 10;
+const CARD_RADIUS = 2;
 const LINK_WIDTH = 2.4;
 const ARROW_LENGTH = 10;
 const ARROW_WIDTH = 9;
@@ -26,12 +25,7 @@ const STRAND_SEGMENTS = 24;
 /** Largest random bow given to a strand between cards, in world units. */
 const STRAND_BEND = 14;
 
-export interface OpenHandlers {
-  network: (groupId: string) => void;
-  note: (node: GraphNode) => void;
-}
-
-export function buildSystem(layout: SystemLayout, theme: Theme, open: OpenHandlers): Network {
+export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: string) => void): Network {
   const root = new THREE.Group();
   const pickables: Pickable[] = [];
   const previewLines: number[] = [];
@@ -42,11 +36,8 @@ export function buildSystem(layout: SystemLayout, theme: Theme, open: OpenHandle
     const pickable = buildCard(card, theme);
     if (card.group) {
       const groupId = card.group.id;
-      pickable.activate = () => open.network(groupId);
+      pickable.activate = () => open(groupId);
       addPreview(card, theme, previewLines, previewColours, dots);
-    } else if (card.node.notes) {
-      const node = card.node;
-      pickable.activate = () => open.note(node);
     }
     root.add(pickable.mesh, pickable.outline, ...cardLabels(card, pickable));
     pickables.push(pickable);
@@ -88,7 +79,6 @@ function cardLabels(card: Card, pickable: Pickable): THREE.Object3D[] {
     details = typeof description === "string" ? escapeHtml(description) : kindText(card);
     // Show what the card produces, or what it takes in if it is a sink (an output, a loss).
     footer = shapeText(card.outputShape.length > 0 ? card.outputShape : card.inputShape);
-    if (card.node.notes) footer = `<span>${footer}</span><span class="note-hint">Notes</span>`;
   }
 
   const terminal = card.node.type === "input" || card.node.type === "output";
@@ -99,9 +89,16 @@ function cardLabels(card: Card, pickable: Pickable): THREE.Object3D[] {
   const foot = label("card-footer", footer);
   foot.position.set(left, bottom, 5);
   foot.center.set(0, 1);
-  foot.element.style.width = `${card.width - 28}px`;
   pickable.labels.push(header.element, foot.element);
-  return [header, foot];
+  if (!card.node.notes) return [header, foot];
+
+  // Labels keep their pixel size while the card scales with zoom, so the hint
+  // is pinned to the card's bottom-right corner rather than laid out in the footer.
+  const hint = label("card-footer note-hint", "Notes");
+  hint.position.set(card.x + card.width / 2 - 14, bottom, 5);
+  hint.center.set(1, 1);
+  pickable.labels.push(hint.element);
+  return [header, foot, hint];
 }
 
 function kindText(card: Card): string {

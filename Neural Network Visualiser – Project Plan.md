@@ -104,7 +104,8 @@ The schema is the contract between Python and the frontend; it is versioned and 
 **Rules**
 
 - `type` is a normalised vocabulary, not the framework's class name: `input`, `output`, `dense`, `conv1d`, `conv2d`, `pool`, `norm`, `activation`, `dropout`, `flatten`, `reshape`, `embedding`, `attention`, `recurrent`, `add`, `concat`, `custom`. Each adapter maps its framework's layers onto this list; unknown layers and system blocks become `custom` with a readable name in `label`.
-- Shapes exclude the batch dimension.
+- Shapes exclude the batch dimension, and image-like tensors are channels-first, `[channels, height, width]`, whatever the framework (the Keras adapter converts from channels-last).
+- Layer parameters use one vocabulary across frameworks: conv `in_channels`, `out_channels`, `kernel_size`, `stride`, `padding` (`"valid"`, `"same"` or per-side amounts), `bias`; pool `mode`, `kernel_size`, `stride`, `padding`; norm `num_features`, `eps`; dropout `p`; dense `in_features`, `out_features`, `bias`. `param_count` counts learned parameters only (not BatchNorm running statistics).
 - `groups` form a tree via `parent`. A top-level group is one network: whenever the graph has top-level groups, the viewer opens on the system overview. Nested groups (ResNet blocks, transformer layers) drive collapse and expand in Phase 3.
 - Edges may carry a `label`, shown on links between networks.
 - `weights` is optional and sampled; never ship full weight matrices. `pairs` are `[from_index, to_index, value]`.
@@ -139,7 +140,7 @@ neurolume/
 │   ├── adapters/
 │   │   ├── base.py          # detect framework, dispatch, fold activations
 │   │   ├── torch_adapter.py
-│   │   └── keras_adapter.py # Phase 2
+│   │   └── keras_adapter.py
 │   ├── system.py            # System builder: networks + blocks + links
 │   ├── demo.py              # demo torch model (show_demo)
 │   ├── weights.py           # top-k / random edge sampling
@@ -153,12 +154,12 @@ neurolume/
 │   └── src/
 │       ├── main.ts          # views (overview / network), navigation, toolbar
 │       ├── schema.ts        # generated from pydantic JSON Schema
-│       ├── layout/          # columns.ts, curves.ts, system.ts (later ELK)
+│       ├── layout/          # columns.ts, maps.ts, curves.ts, system.ts (later ELK)
 │       ├── render/          # viewer, network, edges, system overview
 │       ├── ui/              # interaction, inspector, formatting
 │       └── theme.ts         # dark/light themes, colourmaps
 ├── scripts/                 # build_frontend.ps1, generate_schema_ts.py
-├── examples/                # mlp.py, demo.py, system.py, autoencoder.py (later cnn.py, keras_mlp.py, resnet.py)
+├── examples/                # mlp.py, cnn.py, keras_mlp.py, keras_cnn.py, demo.py, system.py, autoencoder.py (later resnet.py)
 └── tests/
 ```
 
@@ -201,15 +202,17 @@ Not in the original plan; added because large models are usually several network
 
 **Done when:** `examples/system.py` and `examples/autoencoder.py` open as an overview, and every network opens and returns cleanly. _Passes (checked by screenshots and by hand)._
 
-### Phase 2 – Keras adapter and CNNs
+### Phase 2 – Keras adapter and CNNs ✅
 
-- [ ] Keras adapter covering Dense, Conv2D, MaxPooling2D, BatchNormalization, Flatten, Dropout (Keras 3 first).
-- [ ] Torch adapter extended to `Conv2d`, pooling, `BatchNorm2d`.
-- [ ] Conv layers rendered as stacked feature-map slabs (depth = channels, size = spatial dims), not as neuron columns.
-- [ ] Tests asserting the same architecture built in PyTorch and Keras yields equivalent schema JSON.
-- [ ] `System.add()` accepts Keras models, so one system can mix frameworks.
+- [x] Keras adapter covering Dense, Conv2D, MaxPooling2D, BatchNormalization, Flatten, Dropout (Keras 3 first).
+- [x] Torch adapter extended to `Conv2d`, pooling, `BatchNorm2d`.
+- [x] Conv layers rendered as stacked feature-map slabs (depth = channels, size = spatial dims), not as neuron columns.
+- [x] Tests asserting the same architecture built in PyTorch and Keras yields equivalent schema JSON.
+- [x] `System.add()` accepts Keras models, so one system can mix frameworks.
 
 **Done when:** a LeNet-style CNN in both frameworks produces matching graphs and renders correctly.
+
+_Status (29 Oct 2026):_ passes. `examples/cnn.py` (PyTorch) and `examples/keras_cnn.py` (Keras) give identical node types, shapes, parameter counts, activations and parameters (`tests/test_keras_adapter.py`), and both render the same feature-map stacks (checked by screenshot). Keras was tested on its PyTorch backend, since TensorFlow has no Python 3.14 wheels yet; the adapter only uses the Keras API, so other backends should behave the same but are untested.
 
 ### Phase 3 – Branching graphs and semantic zoom
 
