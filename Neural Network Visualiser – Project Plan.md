@@ -149,22 +149,24 @@ Six phases, each ending in something that runs. Do not start a phase until the p
 
 ### Phase 0 – Skeleton
 
-- [ ] Create the repo layout from section 4, `pyproject.toml` with `torch` and `tf` extras, Vite project in `frontend/`.
-- [ ] Build script that runs `vite build` and copies output into `python/neurolume/static/`.
-- [ ] FastAPI server serving a hard-coded graph JSON; `neurolume.show()` opens the browser.
+- [x] Create the repo layout from section 4, `pyproject.toml` with `torch` and `tf` extras, Vite project in `frontend/`.
+- [x] Build script that runs `vite build` and copies output into `python/neurolume/static/`.
+- [x] FastAPI server serving a hard-coded graph JSON; `neurolume.show()` opens the browser.
 
 **Done when:** `pip install -e .` then `python -c "import neurolume; neurolume.show_demo()"` opens a page that draws three columns of dots.
 
 ### Phase 1 – MLP end to end (PyTorch)
 
-- [ ] `schema.py` with pydantic models; export JSON Schema and generate `frontend/src/schema.ts`.
-- [ ] Torch adapter for `nn.Linear`, activations, `nn.Dropout`, `nn.Flatten`, via `torch.fx` plus forward hooks for shapes.
-- [ ] Weight sampling for dense layers (top-k by absolute value, default k = 2000 per layer).
-- [ ] Renderer: one panel per layer, nodes as instanced circles, edges as one `LineSegments` buffer per layer with additive blending, gradient colours per layer.
-- [ ] Cap displayed neurons per layer (e.g. 64) with an ellipsis marker showing the true count.
-- [ ] Pan, zoom, hover tooltip, click a layer to open an inspector (shapes, params, activation).
+- [x] `schema.py` with pydantic models; export JSON Schema and generate `frontend/src/schema.ts`.
+- [x] Torch adapter for `nn.Linear`, activations, `nn.Dropout`, `nn.Flatten`, via `torch.fx` plus forward hooks for shapes.
+- [x] Weight sampling for dense layers (top-k by absolute value, default k = 2000 per layer).
+- [x] Renderer: one panel per layer, nodes as instanced circles, edges as one `LineSegments` buffer per layer with additive blending, gradient colours per layer.
+- [x] Cap displayed neurons per layer (e.g. 64) with an ellipsis marker showing the true count.
+- [x] Pan, zoom, hover tooltip, click a layer to open an inspector (shapes, params, activation).
 
 **Done when:** a 784-512-256-10 MLP renders in the target style at 60 fps, and clicking each layer shows correct shapes and parameter counts.
+
+_Status (28 Oct 2026):_ renders in the target style (checked by headless screenshot of `examples/mlp.py`); shapes and parameter counts are asserted in `tests/test_torch_adapter.py`. Still to confirm by hand: 60 fps in Chrome (frames are drawn on demand, so idle cost is zero) and clicking each layer in a real browser.
 
 ### Phase 2 – Keras adapter and CNNs
 
