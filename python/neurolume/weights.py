@@ -14,7 +14,7 @@ import numpy.typing as npt
 
 from .schema import WeightSample
 
-DEFAULT_K = 2000
+DEFAULT_K = 4000
 
 SampleMode = Literal["topk", "random"]
 

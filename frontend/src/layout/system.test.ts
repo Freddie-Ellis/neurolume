@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Graph, GraphNode } from "../schema";
-import { isSystem, layoutSystem, subgraph } from "./system";
+import { MAX_LINK_STRANDS, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
 
 function node(id: string, type: GraphNode["type"], group: string | null, output_shape: number[], input_shape: number[] = []): GraphNode {
   return { id, type, label: id, group, input_shape, output_shape, params: {}, param_count: 10, activation: null };
@@ -79,5 +79,23 @@ describe("subgraph", () => {
 
   it("keeps a group's own input and output", () => {
     expect(subgraph(system, "enc").nodes.map((n) => n.id)).toEqual(["enc/in", "enc/fc", "enc/out"]);
+  });
+});
+
+describe("strands", () => {
+  it("draws one strand per value the link carries, capped", () => {
+    expect(strandCount([32])).toBe(32);
+    expect(strandCount([2, 3])).toBe(6);
+    expect(strandCount([784])).toBe(MAX_LINK_STRANDS);
+    expect(strandCount([])).toBe(0);
+  });
+
+  it("spreads strands around the card centre and keeps them inside it", () => {
+    const card = layoutSystem(system).cards[0];
+    const slots = strandSlots(MAX_LINK_STRANDS, card);
+    expect(slots).toHaveLength(MAX_LINK_STRANDS);
+    expect((slots[0] + slots[slots.length - 1]) / 2).toBeCloseTo(card.y);
+    expect(slots[0] - slots[slots.length - 1]).toBeLessThan(card.height);
+    expect(strandSlots(1, card)).toEqual([card.y]);
   });
 });

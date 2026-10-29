@@ -14,11 +14,11 @@ from the repo root. The user refreshes the browser; no Python restart needed.
 | `theme.ts` | `themes` (dark/light), `colormaps` (5 per theme), localStorage helpers, `withColormap()` |
 | `layout/columns.ts` | Single-network layout: which nodes are columns vs bands, neuron slots (cap 64, ellipsis gap), tall equal-height panels, `linkSegments()` (weights → visible pairs) |
 | `layout/curves.ts` | `sampleCurve()`: Bézier with random `bend`/`handle` and a pinned `wave` ripple |
-| `layout/system.ts` | `isSystem()`, `layoutSystem()` (cards, ranks by longest path, barycenter ordering), `subgraph()` (one group as a standalone graph, adds synthetic input/output) |
+| `layout/system.ts` | `isSystem()`, `layoutSystem()` (cards, ranks by longest path, barycenter ordering), `subgraph()` (one group as a standalone graph, adds synthetic input/output), `strandCount()`/`strandSlots()` for links |
 | `render/viewer.ts` | three.js renderer, ortho camera (1 world unit = 1 CSS px at zoom 1), pan/zoom, bloom, render-on-demand, `onUserZoom`, `pauseZoom()` |
 | `render/network.ts` | Detailed view: panels, bands, neurons, labels, `titleFor()`/`nameLayers()`, `setHighlight()`, `disposeNetwork()` |
 | `render/edges.ts` | Edge `LineSegments` per link (RGBA: colour from gradient, alpha from weight strength) |
-| `render/system.ts` | Overview: cards with mini previews, ribbon links + arrowheads, link chips; network cards get `activate` |
+| `render/system.ts` | Overview: cards with mini previews, links as bundles of strands (one per tensor value, cap 48; ribbon + arrowhead only when the shape is unknown), link chips; network cards get `activate` |
 | `ui/interaction.ts` | Hover/tooltip/click/dblclick; `pickAt()`; listeners use an AbortController (`detach()`) |
 | `ui/inspector.ts` | Right-hand layer details panel |
 | `ui/format.ts` | Number/shape/activation/framework formatting |

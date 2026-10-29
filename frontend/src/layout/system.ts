@@ -13,6 +13,12 @@ export const NETWORK_CARD = { width: 260, height: 180 };
 export const NODE_CARD = { width: 170, height: 76 };
 export const RANK_GAP = 150;
 export const ROW_GAP = 56;
+/** Most strands drawn for one link; wider tensors are capped (the chip shows the real size). */
+export const MAX_LINK_STRANDS = 48;
+/** Widest gap between strands where they meet a card. */
+export const STRAND_SPACING = 5;
+/** Strands use at most this fraction of a card's height. */
+const STRAND_SPREAD = 0.6;
 
 export interface Card {
   id: string;
@@ -177,6 +183,22 @@ export function layoutSystem(graph: Graph): SystemLayout {
       bottom: Math.min(...cards.map((card) => card.y - card.height / 2)),
     },
   };
+}
+
+/**
+ * How many strands a link draws: one per value in the tensor it carries, so a
+ * 32-unit latent is 32 lines. Returns 0 when the shape is unknown.
+ */
+export function strandCount(shape: number[]): number {
+  if (shape.length === 0) return 0;
+  return Math.min(shape.reduce((total, size) => total * size, 1), MAX_LINK_STRANDS);
+}
+
+/** Heights where `count` strands meet a card's edge, top to bottom, centred on the card. */
+export function strandSlots(count: number, card: Card): number[] {
+  const span = Math.min((count - 1) * STRAND_SPACING, card.height * STRAND_SPREAD);
+  const step = count > 1 ? span / (count - 1) : 0;
+  return Array.from({ length: count }, (_, i) => card.y + span / 2 - i * step);
 }
 
 function networkCard(graph: Graph, group: GraphGroup, id: string): Card {

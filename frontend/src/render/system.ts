@@ -1,15 +1,15 @@
 /**
  * Draws a SystemLayout: a card per network or block, a mini neuron preview
- * inside each network card, and labelled arrows between cards. It returns the
+ * inside each network card, and labelled bundles of strands between cards. It returns the
  * same Network shape as the detailed view, so hover, tooltips and the
  * inspector work unchanged; network cards open on click via `activate`.
  */
 import * as THREE from "three";
 import { sampleCurve } from "../layout/curves";
-import type { Card, CardLink, SystemLayout } from "../layout/system";
+import { type Card, type CardLink, type SystemLayout, strandCount, strandSlots } from "../layout/system";
 import type { Theme } from "../theme";
 import { formatCount, formatFramework, formatParams, formatShape } from "../ui/format";
-import { gradientColour } from "./edges";
+import { gradientColour, pseudoRandom } from "./edges";
 import { type Network, type Pickable, escapeHtml, label, roundedRect, titleFor } from "./network";
 
 const CARD_RADIUS = 10;
@@ -20,6 +20,9 @@ const ARROW_WIDTH = 9;
 const PREVIEW_INSET = { left: 28, right: 28, top: 64, bottom: 40 };
 const PREVIEW_MAX_DOTS = 9;
 const PREVIEW_DOT = 2.6;
+const STRAND_SEGMENTS = 24;
+/** Largest random bow given to a strand between cards, in world units. */
+const STRAND_BEND = 14;
 
 export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: string) => void): Network {
   const root = new THREE.Group();
@@ -38,7 +41,8 @@ export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: 
     root.add(pickable.mesh, pickable.outline, ...cardLabels(card, pickable));
     pickables.push(pickable);
   }
-  for (const link of layout.links) root.add(...buildLink(link, theme));
+  const rankCount = Math.max(...layout.cards.map((card) => card.rank)) + 1;
+  for (const link of layout.links) root.add(...buildLink(link, theme, rankCount));
   root.add(buildPreviewLines(previewLines, previewColours, theme), buildDots(dots, theme));
 
   return { root, pickables, edges: [], theme };
@@ -160,8 +164,69 @@ function buildDots(dots: [number, number][], theme: Theme): THREE.InstancedMesh 
   return mesh;
 }
 
+/**
+ * A link between two cards: one strand per value the tensor carries (capped),
+ * running from the right edge of one card to the left edge of the next. A link
+ * whose shape is unknown falls back to a single ribbon with an arrowhead.
+ */
+function buildLink(link: CardLink, theme: Theme, rankCount: number): THREE.Object3D[] {
+  const x0 = link.from.x + link.from.width / 2;
+  const x1 = link.to.x - link.to.width / 2;
+  const count = strandCount(link.shape);
+  const objects = count > 0 ? [buildStrands(link, count, theme, rankCount)] : buildRibbon(link, theme);
+
+  const caption = link.label ?? (link.shape.length > 0 ? shapeText(link.shape) : null);
+  if (!caption) return objects;
+  const middle = sampleCurve(x0, link.from.y, x1, link.to.y, 2, { handle: 0.5 })[1];
+  const chip = label("link-chip", escapeHtml(caption));
+  chip.position.set(middle.x, middle.y, 5);
+  return [...objects, chip];
+}
+
+/** Strand i leaves slot i of the source card and enters slot i of the target, like a cable. */
+function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: number): THREE.LineSegments {
+  const x0 = link.from.x + link.from.width / 2;
+  const x1 = link.to.x - link.to.width / 2;
+  const starts = strandSlots(count, link.from);
+  const ends = strandSlots(count, link.to);
+  // The gradient runs across the whole system, so a strand takes the colours of the ranks it joins.
+  const t0 = link.from.rank / Math.max(rankCount - 1, 1);
+  const t1 = link.to.rank / Math.max(rankCount - 1, 1);
+
+  const positions: number[] = [];
+  const colours: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const seed = pseudoRandom(i + link.from.rank * 7919 + link.to.y);
+    const shape = { handle: 0.35 + 0.3 * pseudoRandom(seed * 1e4 + 1), bend: (pseudoRandom(seed * 1e4 + 2) - 0.5) * 2 * STRAND_BEND };
+    const points = sampleCurve(x0, starts[i], x1, ends[i], STRAND_SEGMENTS, shape);
+    for (let s = 0; s < STRAND_SEGMENTS; s += 1) {
+      for (const point of [points[s], points[s + 1]]) {
+        const colour = gradientColour(theme.edgeGradient, t0 + (t1 - t0) * point.along);
+        positions.push(point.x, point.y, 0);
+        colours.push(colour.r, colour.g, colour.b);
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 3));
+  // Fewer strands get more opacity each, so a 4-value link is as visible as a 48-value one.
+  const density = Math.min(0.8, Math.max(0.2, 3 / Math.sqrt(count)));
+  const material = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: Math.min(0.9, density * theme.edgeOpacity),
+    blending: theme.edgeBlending === "additive" ? THREE.AdditiveBlending : THREE.NormalBlending,
+    depthWrite: false,
+  });
+  const strands = new THREE.LineSegments(geometry, material);
+  strands.renderOrder = 1;
+  return strands;
+}
+
 /** A curved ribbon from the right edge of one card to an arrowhead on the left edge of the next. */
-function buildLink(link: CardLink, theme: Theme): THREE.Object3D[] {
+function buildRibbon(link: CardLink, theme: Theme): THREE.Object3D[] {
   const x0 = link.from.x + link.from.width / 2;
   const y0 = link.from.y;
   const tipX = link.to.x - link.to.width / 2;
@@ -179,13 +244,7 @@ function buildLink(link: CardLink, theme: Theme): THREE.Object3D[] {
     material,
   );
   ribbon.renderOrder = arrow.renderOrder = 2;
-
-  const caption = link.label ?? (link.shape.length > 0 ? shapeText(link.shape) : null);
-  if (!caption) return [ribbon, arrow];
-  const middle = points[Math.floor(points.length / 2)];
-  const chip = label("link-chip", escapeHtml(caption));
-  chip.position.set(middle.x, middle.y, 5);
-  return [ribbon, arrow, chip];
+  return [ribbon, arrow];
 }
 
 /** Two triangles per segment, offset either side of the curve by half the width. */

@@ -84,7 +84,7 @@ export function gradientColour(stops: readonly string[], t: number): THREE.Color
 }
 
 /** A repeatable number in [0, 1), so the network looks the same on every load. */
-function pseudoRandom(n: number): number {
+export function pseudoRandom(n: number): number {
   const x = Math.sin(n * 12.9898) * 43758.5453;
   return x - Math.floor(x);
 }
