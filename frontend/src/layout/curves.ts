@@ -16,6 +16,20 @@ export interface CurveShape {
   wave?: { amplitude: number; cycles: number; phase: number };
 }
 
+/** About how long each sampled piece of a long curve is, in world units, so long curves stay smooth. */
+export const CURVE_STEP = 8;
+
+/** Segments to sample a curve of about `length` units with (clamped, so a huge layout can't blow up the vertex count). */
+export function segmentsFor(length: number): number {
+  return Math.min(256, Math.max(16, Math.ceil(length / CURVE_STEP)));
+}
+
+/** Segments for `sampleCurve` with these ends and shape, from its control polygon (an upper bound on its length). */
+export function curveSegments(x0: number, y0: number, x1: number, y1: number, { handle = 0.55, bend = 0 }: CurveShape = {}): number {
+  const reach = (x1 - x0) * handle;
+  return segmentsFor(2 * Math.hypot(reach, bend) + Math.hypot(x1 - x0 - 2 * reach, y1 - y0));
+}
+
 /**
  * Sample a cubic Bézier from (x0, y0) to (x1, y1). With the default shape the
  * handles point horizontally, so the edge leaves and enters its neuron flat and

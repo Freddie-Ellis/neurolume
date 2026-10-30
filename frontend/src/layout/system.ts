@@ -7,7 +7,7 @@
  * source, like a circuit schematic. Plain maths, no three.js.
  */
 import type { FeatureMaps, Graph, GraphGroup, GraphNode } from "../schema";
-import { layoutGraph } from "./columns";
+import { type ColumnLayout, layoutGraph } from "./columns";
 
 export const NETWORK_CARD = { width: 260, height: 180 };
 export const PARTS_CARD = { width: 400, height: 280 };
@@ -28,6 +28,11 @@ export const LAYER_CARD = { width: 170, height: 180 };
 const STRAND_SPREAD = 0.6;
 /** How far below the lowest card a back link (one closing a cycle) loops. */
 export const BACK_LINK_DROP = 90;
+/** Height of the lane a link keeps in each rank it passes without stopping. */
+export const LANE_HEIGHT = 24;
+/** A block card widens to fit its description, at about this many units per character, up to MAX_NODE_WIDTH. */
+const DESCRIPTION_CHAR = 7;
+export const MAX_NODE_WIDTH = 260;
 
 export interface Card {
   id: string;
@@ -68,7 +73,8 @@ export interface Miniature {
 }
 
 export type MiniItem =
-  | { kind: "neurons"; x: number; units: number }
+  /** `share`: the part of the height a column takes when parallel branches share its x (from the top). */
+  | { kind: "neurons"; x: number; units: number; share?: [number, number] }
   | { kind: "maps"; x: number; size: number; channels: number }
   | { kind: "merge"; x: number; glyph: string }
   | { kind: "box"; x: number; y: number; width: number; height: number; label: string; inner: Miniature };
@@ -82,7 +88,15 @@ export interface CardLink {
   shape: number[];
   /** Closes a cycle (found in layoutSystem): drawn right to left, as a loop under the cards. */
   back: boolean;
+  /** Where a forward link crosses the ranks it skips: the left and right end of its lane in each. */
+  via: { x: number; y: number }[];
+  /** The share of the source's (and target's) height its strands use, from the top: links on one side split it. */
+  outShare: [number, number];
+  inShare: [number, number];
 }
+
+/** What layoutSystem orders and places in a rank: a card, or the lane of a link passing through. */
+type Slot = { rank: number; x: number; y: number; width: number; height: number };
 
 export interface SystemLayout {
   cards: Card[];
@@ -244,7 +258,7 @@ export function layoutSystem(graph: Graph): SystemLayout {
     const from = cardOf.get(edge.source);
     const to = cardOf.get(edge.target);
     if (!from || !to || from === to || links.some((link) => link.from === from && link.to === to)) continue;
-    links.push({ from, to, label: edge.label, shape: edge.tensor_shape, back: false });
+    links.push({ from, to, label: edge.label, shape: edge.tensor_shape, back: false, via: [], outShare: [0, 1], inShare: [0, 1] });
   }
 
   // 3. Break cycles for ranking only: a depth-first search from the cards in the
@@ -276,34 +290,65 @@ export function layoutSystem(graph: Graph): SystemLayout {
     }
   }
 
-  // 5. Order each rank by the average position of its inputs, to reduce crossings.
+  // 5. A forward link that skips ranks gets a lane in each rank it passes (the
+  // Sugiyama layout's virtual nodes), ordered and placed like a card, so the
+  // cards there make room and the link never runs through one.
   const rankCount = Math.max(...cards.map((card) => card.rank)) + 1;
-  const ranks: Card[][] = Array.from({ length: rankCount }, () => []);
+  const ranks: Slot[][] = Array.from({ length: rankCount }, () => []);
   for (const card of cards) ranks[card.rank].push(card);
-  const order = new Map<Card, number>();
+  const lanes = new Map<CardLink, Slot[]>();
+  const steps: { from: Slot; to: Slot }[] = [];
+  for (const link of forward) {
+    const chain = Array.from({ length: link.to.rank - link.from.rank - 1 }, (_, k): Slot => ({ rank: link.from.rank + k + 1, x: 0, y: 0, width: 0, height: LANE_HEIGHT }));
+    for (const lane of chain) ranks[lane.rank].push(lane);
+    lanes.set(link, chain);
+    const path = [link.from, ...chain, link.to];
+    for (let k = 1; k < path.length; k += 1) steps.push({ from: path[k - 1], to: path[k] });
+  }
+
+  // Order each rank by the average position of its inputs, to reduce crossings.
+  const order = new Map<Slot, number>();
   ranks.forEach((rank, r) => {
     if (r > 0) {
-      const weight = (card: Card) => {
-        const sources = forward.filter((link) => link.to === card).map((link) => order.get(link.from) ?? 0);
+      const weight = (slot: Slot) => {
+        const sources = steps.filter((step) => step.to === slot).map((step) => order.get(step.from) ?? 0);
         return sources.length > 0 ? sources.reduce((a, b) => a + b, 0) / sources.length : Infinity;
       };
       rank.sort((a, b) => weight(a) - weight(b));
     }
-    rank.forEach((card, i) => order.set(card, i - (rank.length - 1) / 2));
+    rank.forEach((slot, i) => order.set(slot, i - (rank.length - 1) / 2));
   });
 
-  // 6. Place ranks left to right, cards in a rank stacked and centred vertically.
+  // 6. Place ranks left to right, cards and lanes in a rank stacked and centred vertically.
   let left = 0;
+  const widths: number[] = [];
   for (const rank of ranks) {
-    const width = Math.max(...rank.map((card) => card.width));
-    const height = rank.reduce((total, card) => total + card.height, 0) + ROW_GAP * (rank.length - 1);
+    const width = Math.max(...rank.map((slot) => slot.width));
+    const height = rank.reduce((total, slot) => total + slot.height, 0) + ROW_GAP * (rank.length - 1);
     let top = height / 2;
-    for (const card of rank) {
-      card.x = left + width / 2;
-      card.y = top - card.height / 2;
-      top -= card.height + ROW_GAP;
+    for (const slot of rank) {
+      slot.x = left + width / 2;
+      slot.y = top - slot.height / 2;
+      top -= slot.height + ROW_GAP;
     }
+    widths.push(width);
     left += width + RANK_GAP;
+  }
+  // A lane runs flat across its whole rank.
+  for (const [link, chain] of lanes) link.via = chain.flatMap(({ rank, x, y }) => [{ x: x - widths[rank] / 2, y }, { x: x + widths[rank] / 2, y }]);
+
+  // Links on the same side of a card each get a band of its height, ordered by
+  // where they head (back links loop under everything), so bundles don't overlap or cross.
+  const heading = (link: CardLink, end: "out" | "in") => {
+    if (link.back) return -Infinity;
+    return end === "out" ? (link.via[0] ?? link.to).y : (link.via[link.via.length - 1] ?? link.from).y;
+  };
+  for (const card of cards) {
+    for (const end of ["out", "in"] as const) {
+      const side = links.filter((link) => (end === "out" ? link.from : link.to) === card);
+      side.sort((a, b) => (heading(a, end) === heading(b, end) ? 0 : heading(b, end) > heading(a, end) ? 1 : -1));
+      side.forEach((link, i) => (link[end === "out" ? "outShare" : "inShare"] = [i / side.length, (i + 1) / side.length]));
+    }
   }
 
   // 7. Neighbours outside this level aren't drawn, only their links, which run
@@ -315,15 +360,16 @@ export function layoutSystem(graph: Graph): SystemLayout {
   const shown = cards.filter((card) => !isOutside(card.node));
   const framed = shown.length > 0 ? shown : cards;
   const room = (type: "input" | "output") => (cards.some((card) => isOutside(card.node) && card.node.type === type) ? OUTSIDE_ROOM : 0);
+  const rows: Slot[] = [...framed, ...[...lanes.values()].flat()];
   return {
     cards,
     links,
     bounds: {
       left: Math.min(...framed.map((card) => card.x - card.width / 2)) - room("input"),
       right: Math.max(...framed.map((card) => card.x + card.width / 2)) + room("output"),
-      top: Math.max(...framed.map((card) => card.y + card.height / 2)),
+      top: Math.max(...rows.map((slot) => slot.y + slot.height / 2)),
       // Back links loop under the cards.
-      bottom: Math.min(...framed.map((card) => card.y - card.height / 2)) - (forward.length < links.length ? BACK_LINK_DROP : 0),
+      bottom: Math.min(...rows.map((slot) => slot.y - slot.height / 2)) - (forward.length < links.length ? BACK_LINK_DROP : 0),
     },
   };
 }
@@ -337,11 +383,16 @@ export function strandCount(shape: number[]): number {
   return Math.min(shape.reduce((total, size) => total * size, 1), MAX_LINK_STRANDS);
 }
 
-/** Heights where `count` strands meet a card's edge, top to bottom, centred on the card. */
-export function strandSlots(count: number, card: Card): number[] {
-  const span = Math.min((count - 1) * STRAND_SPACING, card.height * STRAND_SPREAD);
+/**
+ * Heights where `count` strands meet a card's edge, top to bottom, centred on
+ * `share` of the card's strand area (from the top; the whole of it by default).
+ */
+export function strandSlots(count: number, card: Card, [from, to]: [number, number] = [0, 1]): number[] {
+  const area = card.height * STRAND_SPREAD;
+  const span = Math.min((count - 1) * STRAND_SPACING, area * (to - from));
+  const middle = card.y + area * (0.5 - (from + to) / 2);
   const step = count > 1 ? span / (count - 1) : 0;
-  return Array.from({ length: count }, (_, i) => card.y + span / 2 - i * step);
+  return Array.from({ length: count }, (_, i) => middle + span / 2 - i * step);
 }
 
 function networkCard(graph: Graph, group: GraphGroup, id: string): Card {
@@ -382,6 +433,10 @@ function networkCard(graph: Graph, group: GraphGroup, id: string): Card {
 }
 
 function nodeCard(node: GraphNode, id: string): Card {
+  // A block widens to fit its description, so it doesn't run into the next card.
+  const description = node.params["description"];
+  const fit = typeof description === "string" ? description.length * DESCRIPTION_CHAR + 28 : 0;
+  const size = isLayer(node) ? LAYER_CARD : { ...NODE_CARD, width: Math.min(MAX_NODE_WIDTH, Math.max(NODE_CARD.width, fit)) };
   return {
     id,
     kind: "node",
@@ -396,7 +451,7 @@ function nodeCard(node: GraphNode, id: string): Card {
     rank: 0,
     x: 0,
     y: 0,
-    ...(isLayer(node) ? LAYER_CARD : NODE_CARD),
+    ...size,
   };
 }
 
@@ -417,6 +472,10 @@ function layersMiniature(graph: Graph): Miniature {
   const [left, right] = [Math.min(...xs), Math.max(...xs)];
   const along = (x: number) => (right > left ? (x - left) / (right - left) : 0.5);
   const largest = Math.max(1, ...layout.columns.map((column) => (column.maps ? column.maps.slabs[0].width : 0)));
+  const top = Math.max(...layout.columns.map((column) => column.panel.top));
+  const height = top - Math.min(...layout.columns.map((column) => column.panel.bottom));
+  const share = ({ panel }: ColumnLayout): [number, number] | undefined =>
+    panel.top - panel.bottom < height ? [(top - panel.top) / height, (top - panel.bottom) / height] : undefined;
   const items: MiniItem[] = [];
   const indexOf = new Map<string, number>();
   for (const column of layout.columns) {
@@ -424,7 +483,7 @@ function layersMiniature(graph: Graph): Miniature {
     items.push(
       column.maps
         ? { kind: "maps", x: along(column.x), size: column.maps.slabs[0].width / largest, channels: column.maps.channels }
-        : { kind: "neurons", x: along(column.x), units: column.units },
+        : { kind: "neurons", x: along(column.x), units: column.units, ...(share(column) && { share: share(column) }) },
     );
   }
   for (const band of layout.bands.filter((candidate) => candidate.kind === "merge")) {

@@ -18,7 +18,7 @@
  */
 import * as THREE from "three";
 import type { ArcEnd, ArcLayout, BandLayout, ColumnLayout, LinkLayout, StubLayout } from "../layout/columns";
-import { linkSegments, slotFor } from "../layout/columns";
+import { ARC_LANE_GAP, PANEL_GAP, linkSegments, slotFor } from "../layout/columns";
 import { type CurveShape, sampleCurve } from "../layout/curves";
 import { cellLinks, flattenedCell, frontSlab, sweepOf } from "../layout/maps";
 import { strandCount } from "../layout/system";
@@ -54,6 +54,8 @@ const LEAD_VANISH = 0.8;
 const STUB_LINES = 48;
 /** An arc's strands gather this far under a column before they head off along the lane. */
 const ARC_NECK_DROP = 34;
+/** How far an arc's strands run sideways off a neuron column before turning down to the lane. */
+const ARC_SIDESTEP = 25;
 /** Arcs are long and bright where they bunch up, so they count as this many times their strands for opacity. */
 const ARC_DIMMING = 2.5;
 
@@ -142,23 +144,40 @@ export function buildArc(arc: ArcLayout, theme: Theme, recorded?: FeatureMaps): 
     const [x1, y1, z1] = arcEnd(arc.end, k, count, undefined, "end");
     // At a band's node, leave to the right along its output and arrive from the
     // lower left with its inputs, so in vs out reads the same as the other edges.
-    const reach0 = "band" in arc.start ? MERGE_HOLD + 50 : 30 + 30 * random(1);
-    const reach1 = "band" in arc.end ? 60 : 30 + 30 * random(2);
-    const lane = arc.laneY + (random(3) - 0.5) * 22;
+    // From a column above a parallel branch, the arc reaches the lane past the gap beside its panel.
+    const past = (end: ArcEnd, x: number) => ("column" in end && !end.column.maps && end.column.panel.bottom > 0 ? Math.abs(x - end.column.x) + 50 : 0);
+    const reach0 = "band" in arc.start ? MERGE_HOLD + 50 : past(arc.start, arc.start.column.panel.right) || 30 + 30 * random(1);
+    const reach1 = "band" in arc.end ? 60 : past(arc.end, arc.end.column.panel.left) || 30 + 30 * random(2);
+    // Jitter stays within a third of the lane gap, so arcs in neighbouring lanes read as two bundles.
+    const lane = arc.laneY + (random(3) - 0.5) * (ARC_LANE_GAP / 3);
     const neck = (end: ArcEnd, z: number, n: number, side: "start" | "end") => {
       if ("band" in end) {
         const spread = (random(n) - 0.5) * MERGE_NECK;
         return [side === "start" ? new THREE.Vector3(x0 + MERGE_HOLD, y0 - 8 + spread, z) : new THREE.Vector3(x1 - 26, y1 - 22 + spread * 2, z)];
       }
       const [x, bottom] = columnBottom(end.column);
-      return [new THREE.Vector3(x + (random(n) - 0.5) * 24, bottom - ARC_NECK_DROP + (random(n + 1) - 0.5) * 12, z)];
+      const drop = bottom - ARC_NECK_DROP + (random(n + 1) - 0.5) * 12;
+      if (end.column.maps) return [new THREE.Vector3(x + (random(n) - 0.5) * 24, drop, z)];
+      // A column with a parallel branch's panel below it (its own panel ends above
+      // y = 0): run down the gap beside its panel instead, to just above the lane.
+      if (end.column.panel.bottom > 0) {
+        const gap = side === "start" ? end.column.panel.right + PANEL_GAP / 2 : end.column.panel.left - PANEL_GAP / 2;
+        const low = arc.laneY + ARC_LANE_GAP + (random(n + 1) - 0.5) * 12;
+        return side === "start" ? [new THREE.Vector3(gap, y0, z), new THREE.Vector3(gap, low, z)] : [new THREE.Vector3(gap, low, z), new THREE.Vector3(gap, y1, z)];
+      }
+      // From a neuron column, step off it sideways first (right when leaving, in
+      // from the left when arriving), then gather beside it, so strands never cross its neurons.
+      const step = ARC_SIDESTEP + random(n) * 10;
+      return side === "start"
+        ? [new THREE.Vector3(x0 + ARC_SIDESTEP, y0, z), new THREE.Vector3(x + step, drop, z)]
+        : [new THREE.Vector3(x - step, drop, z), new THREE.Vector3(x1 - ARC_SIDESTEP, y1, z)];
     };
     const path = new THREE.CatmullRomCurve3(
       [
         new THREE.Vector3(x0, y0, z0),
         ...neck(arc.start, z0, 9, "start"),
-        new THREE.Vector3(x0 + reach0 + (random(4) - 0.5) * 16, lane + (random(5) - 0.5) * 14, z0),
-        new THREE.Vector3(x1 - reach1 + (random(6) - 0.5) * 16, lane + (random(7) - 0.5) * 14, z1),
+        new THREE.Vector3(x0 + reach0 + (random(4) - 0.5) * 16, lane + (random(5) - 0.5) * 6, z0),
+        new THREE.Vector3(x1 - reach1 + (random(6) - 0.5) * 16, lane + (random(7) - 0.5) * 6, z1),
         ...neck(arc.end, z1, 11, "end"),
         new THREE.Vector3(x1, y1, z1),
       ],

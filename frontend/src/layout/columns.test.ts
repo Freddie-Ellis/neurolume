@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Graph, GraphNode } from "../schema";
 import {
+  ARC_LANE_GAP,
   MAX_NEURONS_SHOWN,
   MAX_NEURON_SPACING,
   layoutGraph,
@@ -140,6 +141,48 @@ describe("branching graphs", () => {
     const [long, short] = layout.arcs; // input -> proj spans further than fc2 -> add, and they overlap
     expect(Math.abs(long.x1 - long.x0)).toBeGreaterThan(Math.abs(short.x1 - short.x0));
     expect(short.laneY).toBeGreaterThan(long.laneY);
+  });
+});
+
+describe("parallel branches", () => {
+  const edge = (source: string, target: string) => ({ source, target, tensor_shape: [4], label: null });
+  const graph = (nodes: GraphNode[], edges: [string, string][]): Graph => ({ ...mlp, nodes, edges: edges.map(([s, t]) => edge(s, t)) });
+
+  it("stacks two heads on one trunk in the same slot, linked directly, without arcs", () => {
+    const heads = graph(
+      [node("input", "input", [4]), node("a", "dense", [8], [4]), node("b", "dense", [2], [8]), node("c", "dense", [2], [8])],
+      [["input", "a"], ["a", "b"], ["a", "c"]],
+    );
+    const layout = layoutGraph(heads);
+    const [, , b, c] = layout.columns;
+    expect(b.x).toBe(c.x);
+    expect(b.panel.bottom).toBeGreaterThan(c.panel.top); // b above c, panels apart
+    expect(Math.min(...b.slots)).toBeGreaterThan(Math.max(...c.slots));
+    expect(layout.links.map((l) => [l.from.node.id, l.to.node.id])).toEqual([
+      ["input", "a"],
+      ["a", "b"],
+      ["a", "c"],
+    ]);
+    expect(layout.arcs).toEqual([]);
+  });
+
+  it("still draws a ResNet skip as one arc", () => {
+    const block = graph(
+      [node("input", "input", [4]), node("a", "dense", [4], [4]), node("b", "dense", [4], [4]), node("add", "add", [4], [4])],
+      [["input", "a"], ["a", "b"], ["b", "add"], ["a", "add"]],
+    );
+    const layout = layoutGraph(block);
+    expect(layout.arcs.map((arc) => [arc.source.id, arc.target.id])).toEqual([["a", "add"]]);
+    expect(new Set(layout.columns.map((column) => column.x)).size).toBe(3);
+  });
+
+  it("keeps overlapping arcs at least a lane apart", () => {
+    const [long, short] = layoutGraph({
+      ...mlp,
+      nodes: [node("input", "input", [8]), node("fc1", "dense", [8], [8]), node("fc2", "dense", [8], [8]), node("proj", "dense", [8], [8]), node("add", "add", [8], [8])],
+      edges: [edge("input", "fc1"), edge("fc1", "fc2"), edge("input", "proj"), edge("fc2", "add"), edge("proj", "add")],
+    }).arcs;
+    expect(Math.abs(long.laneY - short.laneY)).toBeGreaterThanOrEqual(ARC_LANE_GAP);
   });
 });
 

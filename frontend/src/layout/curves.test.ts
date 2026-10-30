@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sampleCurve } from "./curves";
+import { CURVE_STEP, curveSegments, sampleCurve } from "./curves";
 
 describe("sampleCurve", () => {
   const points = sampleCurve(0, 0, 100, 50, 10);
@@ -32,5 +32,19 @@ describe("sampleCurve", () => {
     expect(wavy[0].y).toBeCloseTo(0);
     expect(wavy[20].y).toBeCloseTo(0);
     expect(Math.max(...wavy.map((p) => Math.abs(p.y)))).toBeGreaterThan(3);
+  });
+});
+
+describe("curveSegments", () => {
+  it("samples long curves finely enough to look smooth", () => {
+    const shape = { handle: 0.5, bend: 40 };
+    const points = sampleCurve(0, 0, 1200, -300, curveSegments(0, 0, 1200, -300, shape), shape);
+    for (let i = 1; i < points.length; i += 1) {
+      expect(Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)).toBeLessThanOrEqual(CURVE_STEP * 1.5);
+    }
+  });
+
+  it("still gives a short curve at least 16 segments", () => {
+    expect(curveSegments(0, 0, 20, 0)).toBe(16);
   });
 });

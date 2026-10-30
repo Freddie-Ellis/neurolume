@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Graph, GraphNode } from "../schema";
-import { MAX_LINK_STRANDS, isOutside, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
+import { LANE_HEIGHT, MAX_LINK_STRANDS, MAX_NODE_WIDTH, NODE_CARD, ROW_GAP, isOutside, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
 
 function node(id: string, type: GraphNode["type"], group: string | null, output_shape: number[], input_shape: number[] = []): GraphNode {
   return { id, type, label: id, group, input_shape, output_shape, params: {}, param_count: 10, activation: null, notes: null };
@@ -95,6 +95,61 @@ describe("layoutSystem with feedback loops", () => {
 
   it("ranks cards downstream of a cycle", () => {
     expect(ranks(blocks(["a", "b", "d"], [["a", "b"], ["b", "a"], ["b", "d"]]))).toEqual([0, 1, 2]);
+  });
+});
+
+describe("links that skip ranks", () => {
+  const blocks = (ids: string[], edges: [string, string][]): Graph => ({
+    ...system,
+    nodes: ids.map((id) => node(id, "custom", null, [4])),
+    edges: edges.map(([source, target]) => edge(source, target)),
+    groups: [],
+  });
+  const layout = layoutSystem(blocks(["a", "b", "c"], [["a", "b"], ["b", "c"], ["a", "c"]]));
+  const [a, b] = layout.cards;
+  const skip = layout.links.find((link) => link.from.id === "node:a" && link.to.id === "node:c")!;
+
+  it("pass the rank between through a lane beside its cards", () => {
+    expect(skip.via).toHaveLength(2); // the lane's two ends in b's rank
+    for (const point of skip.via) {
+      expect(point.x).toBeGreaterThanOrEqual(b.x - b.width / 2);
+      expect(point.x).toBeLessThanOrEqual(b.x + b.width / 2);
+      expect(Math.abs(point.y - b.y)).toBeGreaterThan(b.height / 2);
+    }
+    expect(layout.links.filter((link) => link !== skip).every((link) => link.via.length === 0)).toBe(true);
+  });
+
+  it("keep a lane ROW_GAP from the card in its rank", () => {
+    expect(Math.abs(skip.via[0].y - b.y)).toBeCloseTo(b.height / 2 + ROW_GAP + LANE_HEIGHT / 2);
+  });
+
+  it("split the side of a card with the other links there, ordered by where they head", () => {
+    const direct = layout.links.find((link) => link.from === a && link.to === b)!;
+    const [upper, lower] = skip.via[0].y > b.y ? [skip, direct] : [direct, skip];
+    expect(upper.outShare).toEqual([0, 0.5]);
+    expect(lower.outShare).toEqual([0.5, 1]);
+    expect(strandSlots(1, a, upper.outShare)[0]).toBeGreaterThan(strandSlots(1, a, lower.outShare)[0]);
+  });
+
+  it("leave layouts whose links all go to the next rank as they were", () => {
+    const chain = layoutSystem(blocks(["a", "b", "c"], [["a", "b"], ["b", "c"]]));
+    expect(chain.cards.map((card) => [card.x, card.y])).toEqual([
+      [NODE_CARD.width / 2, 0],
+      [NODE_CARD.width * 1.5 + 150, 0],
+      [NODE_CARD.width * 2.5 + 300, 0],
+    ]);
+    expect(chain.links.every((link) => link.via.length === 0 && link.outShare[1] - link.outShare[0] === 1)).toBe(true);
+  });
+
+  it("widen block cards to fit their description, up to a maximum", () => {
+    const described = (text: string) => {
+      const graph = blocks(["a"], []);
+      graph.nodes[0].params = { description: text };
+      return layoutSystem(graph).cards[0].width;
+    };
+    expect(described("short")).toBe(NODE_CARD.width);
+    expect(described("x".repeat(30))).toBeGreaterThan(NODE_CARD.width);
+    expect(described("x".repeat(60))).toBe(MAX_NODE_WIDTH);
   });
 });
 

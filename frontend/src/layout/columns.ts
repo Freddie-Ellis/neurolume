@@ -205,6 +205,31 @@ export function layoutGraph(graph: Graph): Layout {
   }
   const placeholder = { left: 0, right: 0, top: 0, bottom: 0 };
 
+  // Rank = longest path from the input, counting columns only (bands pass the
+  // signal on). Nodes are in the order they run, so one pass is enough.
+  const depth = new Map<string, number>();
+  for (const node of graph.nodes) {
+    const sources = graph.edges.filter((edge) => edge.target === node.id).map((edge) => depth.get(edge.source) ?? 0);
+    depth.set(node.id, Math.max(0, ...sources) + (isBand(node) || sources.length === 0 ? 0 : 1));
+  }
+  // Neighbouring columns of equal rank are parallel branches (two heads on one
+  // trunk): they share a slot, one above the other. Only neuron columns with no
+  // bands between them; a graph without edges is a chain.
+  const slotOf: number[] = [];
+  columnNodes.forEach((node, i) => {
+    const previous = columnNodes[i - 1];
+    const parallel =
+      previous !== undefined &&
+      graph.edges.length > 0 &&
+      depth.get(node.id) === depth.get(previous.id) &&
+      pendingBands[i].length === 0 &&
+      !drawsMaps(node, columnNodes[i + 1]) &&
+      !drawsMaps(previous, node);
+    slotOf.push(i === 0 ? 0 : slotOf[i - 1] + (parallel ? 0 : 1));
+  });
+  const members = (i: number) => columnNodes.flatMap((_, j) => (slotOf[j] === slotOf[i] ? [j] : []));
+  const slotCount = (slotOf[slotOf.length - 1] ?? -1) + 1;
+
   // How far each column reaches either side of its centre: half a stack's
   // footprint (front slab plus the spread of the slabs behind it), plus a
   // margin; neuron columns are a line. Neighbours sit far enough apart for
@@ -216,6 +241,10 @@ export function layoutGraph(graph: Graph): Layout {
   });
   const centres = [0];
   for (let i = 1; i < columnNodes.length; i += 1) {
+    if (slotOf[i] === slotOf[i - 1]) {
+      centres.push(centres[i - 1]);
+      continue;
+    }
     const needed = reach[i - 1] + reach[i] + pendingBands[i].length * BAND_ROOM;
     centres.push(centres[i - 1] + Math.max(COLUMN_SPACING, needed));
   }
@@ -238,16 +267,34 @@ export function layoutGraph(graph: Graph): Layout {
   // Every panel gets the height of the tallest column (and at least
   // MIN_NEURON_EXTENT), so the panels line up as one row of equal, tall frames.
   // Smaller layers then spread their neurons out to fill more of that height.
+  // Columns sharing a slot split the height, each part with its own header and
+  // padding, so the panels grow until every part holds its column.
+  const partRoom = PANEL_HEADER / 2 + PANEL_PADDING;
   const naturalExtent = Math.max(
-    ...columns.map((column) => (column.maps ? stackExtent(column.maps) : Math.max(...column.slots.map(Math.abs)))),
+    ...columns.map((column, i) => {
+      const n = members(i).length;
+      const natural = column.maps ? stackExtent(column.maps) : Math.max(...column.slots.map(Math.abs));
+      return n * (natural + partRoom) + ((n - 1) * PANEL_GAP) / 2 - partRoom;
+    }),
   );
   const neuronExtent = Math.max(MIN_NEURON_EXTENT, naturalExtent);
-  for (const column of columns) {
-    if (column.maps) continue; // stacks keep their own size
-    const fill = (neuronExtent * 2 * 0.85) / spacingSteps(column.units);
+  const panelTop = neuronExtent + PANEL_PADDING + PANEL_HEADER;
+  /** Column i's part of its slot, top first: its panel's top and bottom, and the middle and half-height of its neuron area. */
+  const part = (i: number) => {
+    const slot = members(i);
+    const height = (panelTop + neuronExtent + PANEL_PADDING - (slot.length - 1) * PANEL_GAP) / slot.length;
+    const top = panelTop - slot.indexOf(i) * (height + PANEL_GAP);
+    const extent = (height - PANEL_HEADER) / 2 - PANEL_PADDING;
+    return { top, bottom: top - height, middle: top - PANEL_HEADER - PANEL_PADDING - extent, extent };
+  };
+  columns.forEach((column, i) => {
+    if (column.maps) return; // stacks keep their own size
+    const { middle, extent } = part(i);
+    const fill = (extent * 2 * 0.85) / spacingSteps(column.units);
     const spacing = Math.min(MAX_NEURON_SPACING, Math.max(NEURON_SPACING, fill));
-    Object.assign(column, neuronSlots(column.units, MAX_NEURONS_SHOWN, spacing));
-  }
+    const { slots, ellipsisY } = neuronSlots(column.units, MAX_NEURONS_SHOWN, spacing);
+    Object.assign(column, { slots: slots.map((y) => y + middle), ellipsisY: ellipsisY === null ? null : ellipsisY + middle });
+  });
   // Spread each run of bands evenly across the clear gap after its column:
   // from the edge of its stack (or its neurons) to the edge of the next one.
   // Bands after the last column start past the end of its panel.
@@ -279,35 +326,51 @@ export function layoutGraph(graph: Graph): Layout {
     return [middle - PANEL_GAP / 2, middle + PANEL_GAP / 2];
   };
   columns.forEach((column, i) => {
+    const slot = members(i);
+    const [first, last] = [slot[0], slot[slot.length - 1]];
+    const { top, bottom } = part(i);
     column.panel = {
-      left: columns[i - 1] ? gutter(i - 1)[1] : outerEdge(i, -1) + PANEL_GAP / 2,
-      right: columns[i + 1] ? gutter(i)[0] : outerEdge(i, 1) - PANEL_GAP / 2,
-      top: neuronExtent + PANEL_PADDING + PANEL_HEADER,
-      bottom: -(neuronExtent + PANEL_PADDING),
+      left: columns[first - 1] ? gutter(first - 1)[1] : outerEdge(first, -1) + PANEL_GAP / 2,
+      right: columns[last + 1] ? gutter(last)[0] : outerEdge(last, 1) - PANEL_GAP / 2,
+      top,
+      bottom,
     };
   });
 
-  // Neighbouring columns are linked when every step between them (through any
-  // bands) is a real edge. A graph without edges is taken to be a chain.
   const order = new Map(graph.nodes.map((node, i) => [node.id, i]));
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
   const edgeKeys = new Set(graph.edges.map((edge) => `${edge.source}>${edge.target}`));
-  const flows = (from: GraphNode, to: GraphNode) => {
-    if (graph.edges.length === 0) return true;
-    const steps = graph.nodes.slice(order.get(from.id)!, order.get(to.id)! + 1);
-    return steps.slice(1).every((node, i) => edgeKeys.has(`${steps[i].id}>${node.id}`));
-  };
   const bandOf = new Map(bands.map((band) => [band.node.id, band]));
+  // The bands on a chain of real edges from one column to another that passes
+  // only bands, or null if there is none. A graph without edges is a chain.
+  const route = (from: GraphNode, to: GraphNode): GraphNode[] | null => {
+    if (graph.edges.length === 0) return graph.nodes.slice(order.get(from.id)! + 1, order.get(to.id)!);
+    for (const edge of graph.edges.filter((candidate) => candidate.source === from.id)) {
+      if (edge.target === to.id) return [];
+      const next = byId.get(edge.target);
+      const rest = next && isBand(next) ? route(next, to) : null;
+      if (next && rest) return [next, ...rest];
+    }
+    return null;
+  };
   const between = (from: GraphNode, to: GraphNode | undefined) =>
     graph.nodes.slice(order.get(from.id)! + 1, to ? order.get(to.id)! : undefined).flatMap((node) => bandOf.get(node.id) ?? []);
-  const tOf = (i: number) => (columns.length > 2 ? i / (columns.length - 2) : 0);
-  const links = columns.slice(1).flatMap((to, i) =>
-    flows(columns[i].node, to.node)
-      ? [{ from: columns[i], to, t: tOf(i), through: between(columns[i].node, to.node).filter((band) => band.kind !== "plain") }]
-      : [],
-  );
+  const tOf = (i: number) => (slotCount > 2 ? slotOf[i] / (slotCount - 2) : 0);
+  // Columns in neighbouring slots are linked where the signal flows from one to the other.
+  const covered = new Set<string>(); // edges drawn by links, so they don't become arcs too
+  const links: LinkLayout[] = [];
+  columns.forEach((from, i) => {
+    for (const to of columns.filter((_, j) => slotOf[j] === slotOf[i] + 1)) {
+      const path = route(from.node, to.node);
+      if (!path) continue;
+      const chain = [from.node, ...path, to.node];
+      for (let k = 1; k < chain.length; k += 1) covered.add(`${chain[k - 1].id}>${chain[k].id}`);
+      links.push({ from, to, t: tOf(i), through: path.flatMap((node) => bandOf.get(node.id) ?? []).filter((band) => band.kind !== "plain") });
+    }
+  });
 
   const panelBottom = Math.min(...columns.map((c) => c.panel.bottom), 0);
-  const arcs = layoutArcs(graph, order, columns, bands, panelBottom);
+  const arcs = layoutArcs(graph, order, columns, bands, panelBottom, covered);
 
   // A column not linked to the next one may still feed bands after it (a
   // block's last norm and its add). Its edges converge on the first merge band
@@ -347,7 +410,7 @@ export function layoutGraph(graph: Graph): Layout {
  * Edges that don't go to the very next layer, as arcs under the panels.
  * Shorter arcs get the lanes nearest the panels, so arcs nest instead of crossing.
  */
-function layoutArcs(graph: Graph, order: Map<string, number>, columns: ColumnLayout[], bands: BandLayout[], panelBottom: number): ArcLayout[] {
+function layoutArcs(graph: Graph, order: Map<string, number>, columns: ColumnLayout[], bands: BandLayout[], panelBottom: number, covered: Set<string>): ArcLayout[] {
   const anchors = new Map<string, { end: ArcEnd; x: number }>();
   for (const column of columns) anchors.set(column.node.id, { end: { column }, x: column.x });
   for (const band of bands) anchors.set(band.node.id, { end: { band }, x: band.x });
@@ -355,6 +418,7 @@ function layoutArcs(graph: Graph, order: Map<string, number>, columns: ColumnLay
   const skips = graph.edges.filter((edge) => {
     const from = order.get(edge.source);
     const to = order.get(edge.target);
+    if (covered.has(`${edge.source}>${edge.target}`)) return false;
     return from !== undefined && to !== undefined && to !== from + 1 && anchors.has(edge.source) && anchors.has(edge.target);
   });
   const left = Math.min(...columns.map((column) => column.x));

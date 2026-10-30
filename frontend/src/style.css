@@ -590,6 +590,13 @@ button.depth-row:hover {
 .labels[data-detail="low"] .link-chip,
 .labels[data-detail="medium"] .card-footer,
 .labels[data-detail="medium"] .link-chip,
+/* Clipped to the card (max-width is set from the zoom in render/system.ts); the inspector shows the full text. */
+.card-header > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .labels[data-detail="medium"] .card-header .layer-kind {
   display: none;
 }

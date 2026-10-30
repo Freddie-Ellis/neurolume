@@ -8,8 +8,8 @@
  * Clicking a block opens the inspector, which also shows its notes.
  */
 import * as THREE from "three";
-import { type CurvePoint, type CurveShape, sampleCurve } from "../layout/curves";
-import { type Card, type CardLink, type MiniItem, type Miniature, type SystemLayout, isLayer, isOutside, strandCount, strandSlots } from "../layout/system";
+import { type CurvePoint, type CurveShape, curveSegments, sampleCurve, segmentsFor } from "../layout/curves";
+import { type Card, type CardLink, LANE_HEIGHT, type MiniItem, type Miniature, type SystemLayout, isLayer, isOutside, strandCount, strandSlots } from "../layout/system";
 import type { Theme } from "../theme";
 import { formatCount, formatFramework, formatParams, formatShape } from "../ui/format";
 import { gradientColour, pseudoRandom } from "./edges";
@@ -31,9 +31,10 @@ const PREVIEW_STRANDS = 40;
 /** How many levels of parts a preview draws inside each other before boxes stay empty. */
 const PREVIEW_DEPTH = 2;
 const PREVIEW_DOT = 2.6;
-const STRAND_SEGMENTS = 24;
 /** Largest random bow given to a strand between cards, in world units. */
 const STRAND_BEND = 14;
+/** Largest ripple given to a strand along a lane past a column it skips, so the bundle stays organic there. */
+const LANE_WAVE = 12;
 /** Share of a link to or from outside this level over which it fades out. */
 const OUTSIDE_FADE = 0.7;
 /** How far from the shown card the chip naming an outside neighbour sits. */
@@ -121,6 +122,8 @@ function cardLabels(card: Card, pickable: Pickable): THREE.Object3D[] {
   const header = label("layer-header card-header", `<span class="layer-name">${escapeHtml(name)}</span><span class="layer-kind">${details}</span>`);
   header.position.set(left, top, 5);
   header.center.set(0, 0);
+  // Labels keep their pixel size while cards scale, so clip the header to the card's width on screen (the viewer sets --zoom).
+  header.element.style.maxWidth = `calc(${card.width - 28}px * var(--zoom, 1))`;
   const foot = label("card-footer", footer);
   foot.position.set(left, bottom, 5);
   foot.center.set(0, 1);
@@ -220,7 +223,10 @@ function drawMiniature({ items, links, arcs }: Miniature, area: Area, pen: Pen, 
   const alone = items.length === 1;
 
   const anchors = items.map((item): Anchors => {
-    if (item.kind === "neurons") return drawNeurons(item.units, px(item.x), middle, height, depth, pen.dots);
+    if (item.kind === "neurons") {
+      const [from, to] = item.share ?? [0, 1];
+      return drawNeurons(item.units, px(item.x), area.top - height * ((from + to) / 2), height * (to - from), depth, pen.dots);
+    }
     if (item.kind === "maps") return drawStack(item, px(item.x), middle, alone ? Math.min(height * 0.8, width * 0.6) : Math.min(height * 0.7, 30), pen);
     if (item.kind === "merge") return drawMerge(item, px(item.x), middle, pen.segment);
     return drawBox(item, area, pen, depth);
@@ -411,9 +417,12 @@ function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<C
   const caption = outside ? String(outside.params["context"]) : link.label ?? (link.shape.length > 0 ? shapeText(link.shape) : null);
   if (!caption) return objects;
   // A fixed distance from the shown card, since the other end is far off screen.
+  // Otherwise halfway across the gap after the source (before any lane), which is always empty.
   const span = Math.max(x1 - x0, 1);
-  const along = outside === link.from.node ? 1 - OUTSIDE_CHIP / span : outside === link.to.node ? OUTSIDE_CHIP / span : 0.5;
-  const point = linkCurve(link, x0, link.from.y, x1, link.to.y, 40, { handle: 0.5 }, floor)[Math.round(along * 40)];
+  const gap = ((link.via[0]?.x ?? x1) - x0) / 2 / span;
+  const along = outside === link.from.node ? 1 - OUTSIDE_CHIP / span : outside === link.to.node ? OUTSIDE_CHIP / span : link.back ? 0.5 : gap;
+  const points = linkCurve(link, x0, strandSlots(1, link.from, link.outShare)[0], x1, strandSlots(1, link.to, link.inShare)[0], { handle: 0.5 }, floor);
+  const point = points.reduce((best, candidate) => (Math.abs(candidate.along - along) < Math.abs(best.along - along) ? candidate : best));
   const chip = label("link-chip", escapeHtml(caption));
   chip.position.set(point.x, point.y, 5);
   return [...objects, chip];
@@ -427,8 +436,8 @@ function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<C
 function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: number, ports: Map<Card, Anchors>, floor: number): THREE.LineSegments {
   const x0 = link.from.x + link.from.width / 2;
   const x1 = link.to.x - link.to.width / 2;
-  const starts = strandSlots(count, link.from);
-  const ends = strandSlots(count, link.to);
+  const starts = strandSlots(count, link.from, link.outShare);
+  const ends = strandSlots(count, link.to, link.inShare);
   const out = ports.get(link.from)?.right;
   const into = ports.get(link.to)?.left;
   // Strand i takes the port at its share of the way down, so strands keep their order (dealing them
@@ -438,16 +447,18 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
   const end = (i: number): Point => (into ? port(into, i) : [x1, ends[i]]);
   // Into a dense layer, every value reaches every neuron: fan each one out to
   // a sample of them (every neuron reached), not one wire per value.
-  const pairs: [Point, Point][] = [];
+  // Each pair also keeps its strand's place across a lane (-0.5 to 0.5), so the bundle keeps its order there.
+  const lane = (i: number) => (count > 1 ? 0.5 - i / (count - 1) : 0);
+  const pairs: [Point, Point, number][] = [];
   if (into && link.to.node.type === "dense") {
     const keep = DENSE_STRANDS / (count * into.length);
     for (let i = 0; i < count; i += 1) {
       for (let j = 0; j < into.length; j += 1) {
         const diagonal = j === Math.floor((i * into.length) / count) || i === Math.floor((j * count) / into.length);
-        if (diagonal || pseudoRandom(i * 31.7 + j * 7.1) < keep) pairs.push([start(i), into[j]]);
+        if (diagonal || pseudoRandom(i * 31.7 + j * 7.1) < keep) pairs.push([start(i), into[j], lane(i)]);
       }
     }
-  } else for (let i = 0; i < count; i += 1) pairs.push([start(i), end(i)]);
+  } else for (let i = 0; i < count; i += 1) pairs.push([start(i), end(i), lane(i)]);
   // The gradient runs across the whole system, so a strand takes the colours of the ranks it joins.
   const t0 = link.from.rank / Math.max(rankCount - 1, 1);
   const t1 = link.to.rank / Math.max(rankCount - 1, 1);
@@ -456,15 +467,21 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
 
   const positions: number[] = [];
   const colours: number[] = [];
-  pairs.forEach(([[sx, sy, sz = 0], [ex, ey, ez = 0]], i) => {
+  pairs.forEach(([[sx, sy, sz = 0], [ex, ey, ez = 0], place], i) => {
     const seed = pseudoRandom(i + link.from.rank * 7919 + link.to.y);
-    const shape = { handle: 0.35 + 0.3 * pseudoRandom(seed * 1e4 + 1), bend: (pseudoRandom(seed * 1e4 + 2) - 0.5) * 2 * STRAND_BEND };
-    const points = linkCurve(link, sx, sy, ex, ey, STRAND_SEGMENTS, shape, floor);
-    for (let s = 0; s < STRAND_SEGMENTS; s += 1) {
+    const random = (k: number) => pseudoRandom(seed * 1e4 + k);
+    const shape: CurveShape = {
+      handle: 0.35 + 0.3 * random(1),
+      bend: (random(2) - 0.5) * 2 * STRAND_BEND,
+      wave: { amplitude: (random(3) - 0.5) * 2 * LANE_WAVE, cycles: 1 + 2 * random(4), phase: random(5) * Math.PI * 2 },
+    };
+    const points = linkCurve(link, sx, sy, ex, ey, shape, floor, place);
+    const last = points.length - 1;
+    for (let s = 0; s < last; s += 1) {
       for (const [k, point] of [[s, points[s]], [s + 1, points[s + 1]]] as const) {
         const colour = gradientColour(theme.edgeGradient, t0 + (t1 - t0) * point.along);
         // At a layer card's stack, a strand sits at its slab's depth (see drawStack).
-        positions.push(point.x, point.y, sz + ((ez - sz) * k) / STRAND_SEGMENTS);
+        positions.push(point.x, point.y, sz + ((ez - sz) * k) / last);
         colours.push(colour.r, colour.g, colour.b, alpha(point.along));
       }
     }
@@ -483,7 +500,9 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
     depthWrite: false,
   });
   const strands = new THREE.LineSegments(geometry, material);
-  strands.renderOrder = 1;
+  // Behind the card panels, so a link that does pass a card reads as not belonging to it;
+  // in front where it runs into a layer card's neurons or stack.
+  strands.renderOrder = out || into ? 1 : -1;
   return strands;
 }
 
@@ -492,10 +511,25 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
  * cycle) leaves its card to the right, loops down to `floor` under the cards
  * and comes back into the target from the left.
  */
-function linkCurve(link: CardLink, sx: number, sy: number, ex: number, ey: number, segments: number, shape: CurveShape, floor: number): CurvePoint[] {
-  if (!link.back) return sampleCurve(sx, sy, ex, ey, segments, shape);
+function linkCurve(link: CardLink, sx: number, sy: number, ex: number, ey: number, shape: CurveShape, floor: number, lane = 0): CurvePoint[] {
+  if (!link.back) {
+    // Through the lanes kept in the ranks it skips (`lane`, -0.5 to 0.5, is the
+    // strand's place across one): one Bézier per stretch, flat at every joint,
+    // and rippling (`shape.wave`) along each lane, so strands there weave rather than run ruled.
+    const stops: [number, number][] = [[sx, sy], ...link.via.map(({ x, y }): [number, number] => [x, y + lane * LANE_HEIGHT]), [ex, ey]];
+    const points: CurvePoint[] = [];
+    for (let s = 1; s < stops.length; s += 1) {
+      const [[x0, y0], [x1, y1]] = [stops[s - 1], stops[s]];
+      const stretch = s % 2 === 0 ? { ...shape, bend: 0 } : { ...shape, wave: undefined };
+      const sampled = sampleCurve(x0, y0, x1, y1, curveSegments(x0, y0, x1, y1, stretch), stretch);
+      points.push(...(s === 1 ? sampled : sampled.slice(1)));
+    }
+    for (const point of points) point.along = ex === sx ? 0 : (point.x - sx) / (ex - sx);
+    return points;
+  }
   // Both handles at height c put the curve's midpoint at 0.125 (sy + ey) + 0.75 c, which is `floor`.
   const c = (floor - 0.125 * (sy + ey)) / 0.75 + (shape.bend ?? 0);
+  const segments = segmentsFor(Math.hypot(BACK_LINK_REACH, c - sy) + Math.abs(ex - sx - 2 * BACK_LINK_REACH) + Math.hypot(BACK_LINK_REACH, c - ey));
   const points: CurvePoint[] = [];
   for (let i = 0; i <= segments; i += 1) {
     const t = i / segments;
@@ -515,17 +549,17 @@ function outsideAlpha(link: CardLink, along: number): number {
 /** A curved ribbon from the right edge of one card to an arrowhead on the left edge of the next. */
 function buildRibbon(link: CardLink, theme: Theme, floor: number): THREE.Object3D[] {
   const x0 = link.from.x + link.from.width / 2;
-  const y0 = link.from.y;
+  const y0 = strandSlots(1, link.from, link.outShare)[0];
   const tipX = link.to.x - link.to.width / 2;
-  const y1 = link.to.y;
+  const y1 = strandSlots(1, link.to, link.inShare)[0];
   // To or from outside this level, it fades out towards that end, and the arrowhead goes off screen with it.
   const toOutside = isOutside(link.to.node);
-  const points = linkCurve(link, x0, y0, toOutside ? tipX : tipX - ARROW_LENGTH, y1, 32, { handle: 0.5 }, floor);
+  const points = linkCurve(link, x0, y0, toOutside ? tipX : tipX - ARROW_LENGTH, y1, { handle: 0.5 }, floor);
   const material = new THREE.MeshBasicMaterial({ color: theme.panelBorderHover, transparent: true, opacity: 0.75, vertexColors: true });
 
   const ribbon = new THREE.Mesh(ribbonGeometry(points, LINK_WIDTH, (along) => outsideAlpha(link, along)), material);
   if (toOutside) {
-    ribbon.renderOrder = 2;
+    ribbon.renderOrder = -1;
     return [ribbon];
   }
   const arrow = new THREE.Mesh(
@@ -536,7 +570,7 @@ function buildRibbon(link: CardLink, theme: Theme, floor: number): THREE.Object3
     ]),
     new THREE.MeshBasicMaterial({ color: theme.panelBorderHover, transparent: true, opacity: 0.75 }),
   );
-  ribbon.renderOrder = arrow.renderOrder = 2;
+  ribbon.renderOrder = arrow.renderOrder = -1;
   return [ribbon, arrow];
 }
 

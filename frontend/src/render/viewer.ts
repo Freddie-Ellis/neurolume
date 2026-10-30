@@ -187,6 +187,7 @@ export class Viewer {
     // Zoomed out, secondary labels would overlap, so CSS hides them, in two steps.
     const zoom = this.camera.zoom;
     this.labelRenderer.domElement.dataset.detail = zoom < LOW_DETAIL_ZOOM ? "low" : zoom < MEDIUM_DETAIL_ZOOM ? "medium" : "full";
+    this.labelRenderer.domElement.style.setProperty("--zoom", String(zoom));
     this.labelRenderer.render(this.scene, this.camera);
   }
 
