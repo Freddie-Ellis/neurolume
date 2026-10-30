@@ -12,7 +12,7 @@
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
 | `feature_maps.py` | `feature_maps()`: a `[C, H, W]` array → `FeatureMaps` (12 most active channels first, ≤32×32, 0-255 per channel, base64) |
 | `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=)` |
-| `server.py` | FastAPI app, `show()` (background thread, free port), `demo_graph()` fallback |
+| `server.py` | Tornado app (like SnakeViz: one dependency, WebSockets built in for Phase 5), `show()` (server on a background thread with its own event loop, free port), `demo_graph()` fallback |
 | `demo.py` | `demo_model()` / `demo_input()` (torch imported inside), `sample_digit()`: a drawn "7" (numpy) for CNN examples |
 
 ## Code map
@@ -33,7 +33,7 @@ order) · shape/param helpers.
 
 **`adapters/base.py`**: `to_graph()` (framework detection, Keras first),
 `fold_activations()`. **`system.py`**: `System.add/block/connect/to_graph`.
-**`server.py`**: `create_app` (FastAPI), `show` / `show_demo`, `Viewer`
+**`server.py`**: `create_app` (Tornado: `/`, `/api/graph`, `/assets/`; request log off), `show` / `show_demo`, `Viewer` (thread + event loop; `stop()`)
 (handle returned in notebooks), `demo_graph` (fallback without torch).
 
 ## Graph conventions

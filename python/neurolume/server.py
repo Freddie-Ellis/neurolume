@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import sys
 import threading
-import time
 import webbrowser
 from pathlib import Path
 from typing import Any
 
-import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+import tornado.web
 
 from .adapters import to_graph
 from .schema import Graph
@@ -67,39 +64,64 @@ def demo_graph() -> Graph:
     )
 
 
-def create_app(graph: Graph | None = None) -> FastAPI:
-    """Create the viewer application with an optional graph override."""
-    app = FastAPI(title="Neurolume")
-    current_graph = graph or demo_graph()
+class _GraphHandler(tornado.web.RequestHandler):
+    def initialize(self, graph: Graph) -> None:
+        self.graph = graph
 
-    @app.get("/api/graph")
-    def get_graph() -> dict[str, Any]:
-        return current_graph.model_dump(mode="json")
+    def get(self) -> None:
+        self.set_header("Content-Type", "application/json")
+        self.write(self.graph.model_dump_json())
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
+
+class _IndexHandler(tornado.web.RequestHandler):
+    def get(self) -> None:
         index_file = _STATIC_DIR / "index.html"
-        if index_file.exists():
-            return index_file.read_text(encoding="utf-8")
-        return _fallback_page()
+        self.write(index_file.read_text(encoding="utf-8") if index_file.exists() else _fallback_page())
 
-    assets_dir = _STATIC_DIR / "assets"
-    if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    return app
+def create_app(graph: Graph | None = None) -> tornado.web.Application:
+    """The viewer application: the page, its assets and the graph at /api/graph."""
+    return tornado.web.Application(
+        [
+            (r"/", _IndexHandler),
+            (r"/api/graph", _GraphHandler, {"graph": graph or demo_graph()}),
+            (r"/assets/(.*)", tornado.web.StaticFileHandler, {"path": str(_STATIC_DIR / "assets")}),
+        ],
+        log_function=lambda handler: None,  # no request log in the user's terminal
+    )
 
 
 class Viewer:
-    """A running viewer server. Call :meth:`stop` to shut it down."""
+    """A running viewer server, on its own thread and event loop. Call :meth:`stop` to shut it down."""
 
-    def __init__(self, server: uvicorn.Server, thread: threading.Thread, url: str) -> None:
-        self.url = url
-        self._server = server
-        self._thread = thread
+    def __init__(self, app: tornado.web.Application, port: int) -> None:
+        self.url = f"http://127.0.0.1:{port}"
+        self._started = threading.Event()
+        self._error: OSError | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stopping: asyncio.Event | None = None
+        self._thread = threading.Thread(target=lambda: asyncio.run(self._serve(app, port)), name="neurolume-server", daemon=True)
+        self._thread.start()
+        self._started.wait()
+        if self._error:
+            raise RuntimeError(f"the Neurolume server failed to start on port {port}") from self._error
+
+    async def _serve(self, app: tornado.web.Application, port: int) -> None:
+        try:
+            server = app.listen(port, address="127.0.0.1")
+        except OSError as error:
+            self._error = error
+            self._started.set()
+            return
+        self._loop = asyncio.get_running_loop()
+        self._stopping = asyncio.Event()
+        self._started.set()
+        await self._stopping.wait()
+        server.stop()
 
     def stop(self) -> None:
-        self._server.should_exit = True
+        if self._loop and self._stopping:
+            self._loop.call_soon_threadsafe(self._stopping.set)
         self._thread.join(timeout=5)
 
     def wait(self) -> None:
@@ -136,18 +158,7 @@ def show(
     session such as a REPL or notebook. Pass ``block`` to override this.
     """
     graph = demo_graph() if model is None else to_graph(model, sample, **adapter_options)
-    app = create_app(graph)
-    port = port or _free_port()
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, name="neurolume-server", daemon=True)
-    thread.start()
-
-    while not server.started and thread.is_alive():
-        time.sleep(0.05)
-    if not thread.is_alive():
-        raise RuntimeError(f"the Neurolume server failed to start on port {port}")
-
-    viewer = Viewer(server, thread, f"http://127.0.0.1:{port}")
+    viewer = Viewer(create_app(graph), port or _free_port())
     print(f"Neurolume viewer running at {viewer.url}")
     if open_browser:
         webbrowser.open(viewer.url)

@@ -1,12 +1,13 @@
 import importlib.util
+import json
+import urllib.request
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from neurolume.schema import SCHEMA_VERSION, Graph
-from neurolume.server import create_app, demo_graph
+from neurolume.server import demo_graph, show
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -32,18 +33,22 @@ def test_demo_graph_uses_versioned_schema() -> None:
     assert set(types[1:-1]) == {"dense"}
 
 
+def _get(path: str) -> str:
+    """Fetch a path from a real running viewer server (the demo graph)."""
+    viewer = show(open_browser=False, block=False)
+    try:
+        with urllib.request.urlopen(viewer.url + path) as response:
+            return response.read().decode()
+    finally:
+        viewer.stop()
+
+
 def test_graph_endpoint_returns_json() -> None:
-    client = TestClient(create_app())
-    response = client.get("/api/graph")
-    assert response.status_code == 200
-    assert response.json()["schema_version"] == SCHEMA_VERSION
+    assert json.loads(_get("/api/graph"))["schema_version"] == SCHEMA_VERSION
 
 
 def test_index_page_is_served() -> None:
-    client = TestClient(create_app())
-    response = client.get("/")
-    assert response.status_code == 200
-    assert "<html" in response.text.lower()
+    assert "<html" in _get("/").lower()
 
 
 def test_unknown_node_type_is_rejected() -> None:

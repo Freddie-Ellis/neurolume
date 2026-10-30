@@ -119,7 +119,7 @@ The schema is the contract between Python and the frontend; it is versioned and 
 | --- | --- | --- |
 | Python packaging | `pyproject.toml`, setuptools, Python 3.10+ | Standard; frontend build is bundled into the wheel |
 | Schema | pydantic v2 | Validation plus JSON Schema export for the TS types |
-| Server | FastAPI + uvicorn (WebSockets in Phase 5) | Small, async, easy static serving |
+| Server | Tornado (WebSockets in Phase 5) | One dependency with none of its own (as in SnakeViz); replaced FastAPI + uvicorn, which pulled in 9 packages |
 | Framework deps | `torch`, `tensorflow` as optional extras (`pip install neurolume[torch]`) | Users install only what they need |
 | Frontend | TypeScript, Vite | Fast builds, single-file output for export |
 | Rendering | three.js r170 (`LineSegments`, `InstancedMesh`, CSS2D labels) | Tens of thousands of edges in one draw call; crisp HTML text |

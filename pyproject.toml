@@ -9,17 +9,16 @@ description = "Interactive neural network architecture visualisation."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi>=0.110",
     "numpy>=1.24",
     "pydantic>=2.5",
-    "uvicorn>=0.29",
+    "tornado>=6.4",
 ]
 
 [project.optional-dependencies]
 torch = ["torch>=2.0"]
 tensorflow = ["tensorflow>=2.15"]
 keras = ["keras>=3.0"]  # Keras 3 runs on PyTorch too: set KERAS_BACKEND=torch
-dev = ["pytest>=8.0", "httpx>=0.27"]
+dev = ["pytest>=8.0"]
 examples = ["torchvision>=0.17"]  # examples/resnet.py; its test skips without it
 
 [project.scripts]
