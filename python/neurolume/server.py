@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import tornado.web
+import tornado.websocket
 
 from .adapters import to_graph
 from .export import standalone_page
@@ -75,14 +76,45 @@ class _GraphHandler(tornado.web.RequestHandler):
         self.write(self.graph.model_dump_json())
 
 
-class _ExportHandler(_GraphHandler):
-    """The standalone HTML file, as a download (the viewer's Settings > Export button)."""
+class _ExportHandler(tornado.web.RequestHandler):
+    """The standalone HTML file, as a download (the viewer's Settings > Export button); a live run's history goes in too."""
+
+    def initialize(self, graph: Graph, run: Any) -> None:
+        self.graph = graph
+        self.run = run
 
     def get(self) -> None:
         name = re.sub(r"[^\w.-]+", "_", self.graph.model.name).strip("_") or "model"
         self.set_header("Content-Type", "text/html; charset=utf-8")
         self.set_header("Content-Disposition", f'attachment; filename="{name}.html"')
-        self.write(standalone_page(self.graph))
+        self.write(standalone_page(self.graph, self.run))
+
+
+class _SnapshotHandler(tornado.web.RequestHandler):
+    """/api/run/weights?step=N: the run's weights at a step, for the viewer's timeline."""
+
+    def initialize(self, run: Any) -> None:
+        self.run = run
+
+    def get(self) -> None:
+        snapshot = self.run.snapshot(int(self.get_query_argument("step")))
+        if snapshot is None:
+            raise tornado.web.HTTPError(404)
+        self.set_header("Content-Type", "application/json")
+        self.write(snapshot.model_dump_json())
+
+
+class _LiveSocket(tornado.websocket.WebSocketHandler):
+    """/ws: live training updates from a ``neurolume.live.Run`` (only on servers started by ``watch()``)."""
+
+    def initialize(self, run: Any) -> None:
+        self.run = run
+
+    def open(self) -> None:  # type: ignore[override]
+        self.run.join(self)
+
+    def on_close(self) -> None:
+        self.run.leave(self)
 
 
 class _IndexHandler(tornado.web.RequestHandler):
@@ -91,15 +123,19 @@ class _IndexHandler(tornado.web.RequestHandler):
         self.write(index_file.read_text(encoding="utf-8") if index_file.exists() else _fallback_page())
 
 
-def create_app(graph: Graph | None = None) -> tornado.web.Application:
-    """The viewer application: the page, its assets, the graph at /api/graph and the standalone file at /api/export."""
+def create_app(graph: Graph | None = None, run: Any = None) -> tornado.web.Application:
+    """The viewer application: the page, its assets, the graph at /api/graph, the standalone file at
+    /api/export and, with a ``run`` (from ``watch()`` or ``open_run()``), its updates at /ws and its
+    weight snapshots at /api/run/weights."""
     graph = graph or demo_graph()
+    live = [(r"/ws", _LiveSocket, {"run": run}), (r"/api/run/weights", _SnapshotHandler, {"run": run})] if run is not None else []
     return tornado.web.Application(
         [
             (r"/", _IndexHandler),
             (r"/api/graph", _GraphHandler, {"graph": graph}),
-            (r"/api/export", _ExportHandler, {"graph": graph}),
+            (r"/api/export", _ExportHandler, {"graph": graph, "run": run}),
             (r"/assets/(.*)", tornado.web.StaticFileHandler, {"path": str(_STATIC_DIR / "assets")}),
+            *live,
         ],
         log_function=lambda handler: None,  # no request log in the user's terminal
     )

@@ -35,13 +35,15 @@ export interface Network {
   pickables: Pickable[];
   edges: EdgeBundle[];
   theme: Theme;
+  /** Live training: repaint a layer's feature-map slabs in place (same channels, new pictures). */
+  paintMaps?: Record<string, (recorded: FeatureMaps) => void>;
 }
 
 export function buildNetwork(layout: Layout, graph: Graph, theme: Theme): Network {
   const root = new THREE.Group();
   nameLayers(graph);
   const edges = [
-    ...layout.links.map((link) => buildEdges(link, graph.weights?.[link.to.node.id], theme, graph.feature_maps?.[link.from.node.id])),
+    ...layout.links.map((link) => buildEdges(link, graph.weights?.[link.to.node.id], theme, graph.feature_maps?.[link.from.node.id], graph.live)),
     ...layout.stubs.map((stub) => buildStub(stub, theme, graph.feature_maps?.[stub.from.node.id])),
     ...layout.arcs.map((arc) => buildArc(arc, theme, graph.feature_maps?.[arc.source.id])),
     // Inputs and outputs that connect outside this view: edges running off screen.
@@ -73,11 +75,15 @@ export function buildNetwork(layout: Layout, graph: Graph, theme: Theme): Networ
   }
   const neuronColumns = layout.columns.filter((column) => !column.maps);
   root.add(buildNeurons(neuronColumns, theme), buildEllipses(neuronColumns, theme));
+  const paintMaps: Record<string, (recorded: FeatureMaps) => void> = {};
   for (const column of layout.columns) {
-    if (column.maps) root.add(buildSlabs(column, columnPosition(column, layout.columns.length), theme, graph.feature_maps?.[column.node.id]));
+    if (!column.maps) continue;
+    const slabs = buildSlabs(column, columnPosition(column, layout.columns.length), theme, graph.feature_maps?.[column.node.id]);
+    root.add(slabs.group);
+    paintMaps[column.node.id] = slabs.paint;
   }
 
-  return { root, pickables, edges, theme };
+  return { root, pickables, edges, theme, paintMaps };
 }
 
 /** Free the GPU memory and remove the HTML labels of a network that is being replaced. */
@@ -125,26 +131,23 @@ function columnPosition(column: ColumnLayout, columnCount: number): number {
  * the panel colour (no response) to the layer colour (strongest response);
  * the front slab shows the most active channel.
  */
-function buildSlabs(column: ColumnLayout, t: number, theme: Theme, recorded: FeatureMaps | undefined): THREE.Group {
+function buildSlabs(column: ColumnLayout, t: number, theme: Theme, recorded: FeatureMaps | undefined): { group: THREE.Group; paint: (recorded: FeatureMaps) => void } {
   const slabs = column.maps!.slabs;
   const colour = gradientColour(theme.edgeGradient, t);
   const fill = new THREE.Color(theme.panelFill); // untinted: the outlines carry the layer colour
   const grid = new THREE.Color(theme.panelBorder);
   const images = recorded ? decodeFeatureMaps(recorded) : [];
   const group = new THREE.Group();
+  const pictured: [THREE.MeshBasicMaterial, number][] = []; // slabs showing a map, and which channel (index in `images`)
 
   const positions: number[] = [];
   const colours: number[] = [];
   slabs.forEach(({ left, bottom, width, height }, i) => {
     const z = SLAB_Z + i * SLAB_Z_STEP;
     const image = images[slabs.length - 1 - i]; // the front slab (last) shows the first, most active channel
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, height).translate(left + width / 2, bottom + height / 2, z),
-      new THREE.MeshBasicMaterial(
-        image ? { map: mapTexture(image, recorded!.width, recorded!.height, fill, colour) } : { color: fill },
-      ),
-    );
-    group.add(plane);
+    const material = new THREE.MeshBasicMaterial(image ? { map: mapTexture(image, recorded!.width, recorded!.height, fill, colour) } : { color: fill });
+    if (image) pictured.push([material, slabs.length - 1 - i]);
+    group.add(new THREE.Mesh(new THREE.PlaneGeometry(width, height).translate(left + width / 2, bottom + height / 2, z), material));
 
     const alpha = slabs.length > 1 ? 0.35 + (0.65 * i) / (slabs.length - 1) : 1;
     const [right, top] = [left + width, bottom + height];
@@ -170,7 +173,15 @@ function buildSlabs(column: ColumnLayout, t: number, theme: Theme, recorded: Fea
   const lines = new THREE.LineSegments(outlines, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true }));
   lines.renderOrder = 3;
   group.add(lines);
-  return group;
+  const paint = (next: FeatureMaps) => {
+    const fresh = decodeFeatureMaps(next);
+    for (const [material, channel] of pictured) {
+      if (!fresh[channel]) continue;
+      material.map?.dispose();
+      material.map = mapTexture(fresh[channel], next.width, next.height, fill, colour);
+    }
+  };
+  return { group, paint };
 }
 
 /**

@@ -3,13 +3,14 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import * as THREE from "three";
 import "./style.css";
-import { layoutGraph } from "./layout/columns";
+import { type StrengthLook, layoutGraph } from "./layout/columns";
 import { LIMIT_CONTROLS, type LimitName, limits, setLimit } from "./limits";
 import { isSystem, layoutSystem, subgraph } from "./layout/system";
 import { type Network, buildNetwork, disposeNetwork, escapeHtml } from "./render/network";
+import { setLiveWeights } from "./render/edges";
 import { buildSystem } from "./render/system";
 import { type Bounds, Viewer } from "./render/viewer";
-import { SCHEMA_VERSION, type Graph } from "./schema";
+import { SCHEMA_VERSION, type FeatureMaps, type Graph } from "./schema";
 import {
   type Theme,
   colormapCss,
@@ -29,6 +30,8 @@ declare global {
   interface Window {
     /** Set by standalone HTML exports so the viewer works without a server. */
     __NEUROLUME_GRAPH__?: Graph;
+    /** Set by exports of a training run: its history, shown with the timeline (live/live.ts). */
+    __NEUROLUME_RUN__?: import("./live/live").EmbeddedRun;
   }
 }
 
@@ -155,6 +158,14 @@ class Stage {
       if (this.view?.parent && zoom < this.fitZoom * ZOOM_OUT_TO_PARENT) this.back();
       else if (zoomingIn && zoom > this.fitZoom) this.openCardUnder(clientX, clientY, zoom);
     };
+    // Zoom thresholds are shares of the fit zoom, so it must follow the view's size. A Qt widget
+    // loads at Qt's small default size and is laid out afterwards; a view still at its fit is refitted.
+    viewer.onResize = () => {
+      if (!this.view) return;
+      if (Math.abs(this.viewer.camera.zoom - this.fitZoom) < 1e-6) return this.fit();
+      this.fitZoom = this.viewer.fitZoomFor(this.view.bounds);
+      this.viewer.minZoom = this.fitZoom * MIN_ZOOM_OF_FIT;
+    };
   }
 
   private openCardUnder(clientX: number, clientY: number, zoom: number): void {
@@ -224,6 +235,29 @@ class Stage {
     this.interaction?.clearSelection();
   }
 
+  /** Live training: what dense edges show now, per layer, kept so every rebuild (theme, another level) shows it too. */
+  private liveWeights: Record<string, ArrayLike<number>> = {};
+  private liveLooks: Record<string, StrengthLook> = {};
+
+  /** Live training: the latest feature maps, painted onto the slabs (kept for rebuilds too). */
+  private liveMaps: Record<string, FeatureMaps> = {};
+  setLiveMaps(maps: Record<string, FeatureMaps>): void {
+    const changed = Object.entries(maps).filter(([id, recorded]) => recorded !== this.liveMaps[id]); // only new pictures cost textures
+    this.liveMaps = maps;
+    for (const [id, recorded] of changed) this.network?.paintMaps?.[id]?.(recorded);
+    if (changed.length > 0) this.viewer.requestRender();
+  }
+
+  setLiveWeights(values: Record<string, ArrayLike<number>>, looks: Record<string, StrengthLook> = {}): void {
+    this.liveWeights = values;
+    this.liveLooks = looks;
+    for (const edges of this.network?.edges ?? []) {
+      const layer = edges.live?.layer;
+      if (layer && values[layer]) setLiveWeights(edges, values[layer], looks[layer]);
+    }
+    this.viewer.requestRender();
+  }
+
   private remount(): void {
     this.inspector.hide();
     this.interaction?.detach();
@@ -233,7 +267,10 @@ class Stage {
     this.network = this.view.build(this.theme);
     this.viewer.scene.add(this.network.root);
     this.interaction = attachInteraction(this.viewer, this.network, this.inspector, this.tooltip, () => this.fit());
-    this.viewer.requestRender();
+    this.setLiveWeights(this.liveWeights, this.liveLooks);
+    const maps = this.liveMaps;
+    this.liveMaps = {}; // a rebuilt view starts from the graph's maps: paint them all again
+    this.setLiveMaps(maps);
   }
 }
 
@@ -481,6 +518,21 @@ async function main(): Promise<void> {
 
   const open = (view: View) => stage?.show(view);
   stage.show(isSystem(graph) ? systemView(graph, open) : networkView(graph, null));
+  // A model being trained (neurolume.watch): load the live code only now, so plain viewers never fetch it.
+  if (graph.live) {
+    void import("./live/live").then(({ startLive }) =>
+      startLive(app, graph, {
+        onStripShown: (strip) => {
+          const below = viewer.fitInsetBottom;
+          const stripTop = () => app.getBoundingClientRect().bottom - strip.getBoundingClientRect().top;
+          viewer.fitInsetBottom = () => Math.max(below(), stripTop());
+          stage?.fit();
+        },
+        setWeights: (values, looks) => stage?.setLiveWeights(values, looks),
+        setMaps: (maps) => stage?.setLiveMaps(maps),
+      }, window.__NEUROLUME_RUN__),
+    );
+  }
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     // Esc closes the inspector first, then steps back out of a network.

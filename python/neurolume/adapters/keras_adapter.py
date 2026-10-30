@@ -17,14 +17,15 @@ shows it as its own network that opens to its layers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import keras
 import numpy as np
 
 from ..feature_maps import feature_maps as encode_feature_maps
-from ..schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
-from ..weights import DEFAULT_K, SampleMode, sample_dense
+from ..schema import PERCENTILES, FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
+from ..weights import DEFAULT_K, PARAM_SAMPLE, SampleMode, sample_dense
 from .base import carry_through_folds, fold_activations, is_shape
 
 # Weights that hold running statistics rather than learned parameters. PyTorch
@@ -128,6 +129,77 @@ def from_keras(
 
 def _own_layers(model: keras.Model) -> list[keras.layers.Layer]:
     return [layer for layer in model.layers if type(layer).__name__ != "InputLayer"]
+
+
+def live_sampler(model: keras.Model, graph: Graph) -> Callable[[int], dict[str, Any]]:
+    """For live training: the Keras version of ``torch_adapter.live_sampler``, same results.
+
+    Parameters are read with numpy (any backend). Gradients exist only on the
+    torch backend, which leaves them on each variable after a batch; on other
+    backends ``grad_norm`` and the edges' gradients are missing.
+    """
+    leaves: dict[str, keras.layers.Layer] = {}
+
+    def collect(outer: keras.Model) -> None:
+        for layer in _own_layers(outer):
+            if isinstance(layer, keras.Model):
+                collect(layer)
+            else:
+                leaves[layer.name] = layer
+
+    collect(model)
+    channels_last = keras.config.image_data_format() == "channels_last"
+    nodes = {node.id: node for node in graph.nodes}
+    picks: dict[str, tuple[Any, np.ndarray, np.ndarray]] = {}
+    for node_id, weight_sample in (graph.weights or {}).items():
+        if node_id not in leaves or not weight_sample.pairs:
+            continue
+        inputs, outputs, _ = (np.asarray(column, dtype=np.int64) for column in zip(*weight_sample.pairs))
+        flattened = _flattened_image_shape(nodes[node_id], graph.nodes, graph.edges)
+        if flattened is not None and channels_last:
+            # Pairs count inputs channels-first (see from_keras); map them back to the kernel's rows.
+            inputs = _rows_channels_first(np.arange(int(np.prod(flattened)))[:, None], flattened)[inputs, 0]
+        picks[node_id] = (leaves[node_id].kernel, inputs, outputs)
+    variables = list(model.trainable_variables)
+    total = sum(int(np.prod(variable.shape)) for variable in variables) or 1
+    rng = np.random.default_rng(0)  # the values read for the percentiles: the same every time, spread by size
+    chosen = [rng.integers(0, max(1, int(np.prod(v.shape))), max(1, round(PARAM_SAMPLE * int(np.prod(v.shape)) / total))) for v in variables]
+    previous: tuple[int, list[np.ndarray]] | None = None
+
+    def gradient(variable: Any) -> np.ndarray | None:
+        grad = getattr(variable.value, "grad", None)  # only the torch backend keeps one
+        return grad.detach().float().cpu().numpy() if grad is not None else None
+
+    def norm(arrays: list[np.ndarray]) -> float:
+        return float(np.sqrt(sum(float(np.square(a, dtype=np.float64).sum()) for a in arrays)))
+
+    def read(step: int) -> dict[str, Any]:
+        nonlocal previous
+        weights, gradients = {}, {}
+        for node_id, (kernel, rows, columns) in picks.items():
+            weights[node_id] = keras.ops.convert_to_numpy(kernel).astype(np.float32)[rows, columns]
+            grad = gradient(kernel)
+            if grad is not None:
+                gradients[node_id] = grad[rows, columns]
+        current = [keras.ops.convert_to_numpy(variable).astype(np.float32) for variable in variables]
+        grads = [g for g in (gradient(variable) for variable in variables) if g is not None]
+        weight_norm = norm(current)
+        update = None
+        if previous is not None and step > previous[0] and norm(previous[1]) > 0:
+            update = norm([now - then for now, then in zip(current, previous[1])]) / norm(previous[1]) / (step - previous[0])
+        previous = (step, current)
+        values = np.concatenate([array.ravel()[index] for array, index in zip(current, chosen)]) if current else np.zeros(1)
+        finite = bool(np.isfinite(values).all()) and np.isfinite(weight_norm)
+        stats = {
+            "weight_norm": weight_norm if finite else None,
+            "grad_norm": norm(grads) if grads else None,
+            "update_ratio": update if finite else None,
+            "finite": finite,
+            "percentiles": np.percentile(values, PERCENTILES).tolist() if finite else [],
+        }
+        return {"weights": weights, "gradients": gradients, "stats": stats}
+
+    return read
 
 
 def _read_layers(

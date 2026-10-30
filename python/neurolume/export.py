@@ -20,21 +20,40 @@ def export_html(model: Any, sample: Any = None, path: str | Path = "model.html",
 
     Takes the same ``sample`` and options as ``show``. The file embeds the graph
     and the whole viewer, so it opens from disk or an email attachment, offline.
+    ``model`` can also be a live ``Session`` (from ``watch()``): the file then
+    holds the run too, with its charts and timeline (``EXPORT_SNAPSHOTS`` steps).
     """
+    from .live import Session
+
     target = Path(path)
-    target.write_text(standalone_page(to_graph(model, sample, **adapter_options)), encoding="utf-8")
+    if isinstance(model, Session):
+        page = standalone_page(model.run.graph, model.run)
+    else:
+        page = standalone_page(to_graph(model, sample, **adapter_options))
+    target.write_text(page, encoding="utf-8")
     return target
 
 
-def standalone_page(graph: Graph) -> str:
-    """The viewer and ``graph`` as one HTML page (also served at /api/export for the Settings button)."""
+def standalone_page(graph: Graph, run: Any = None) -> str:
+    """The viewer and ``graph`` as one HTML page (also served at /api/export for the Settings button).
+
+    With a ``run`` (``neurolume.live.Run``) the page holds its history as
+    ``window.__NEUROLUME_RUN__`` (a ``SavedRun`` without the graph) and shows it
+    as a finished run; without one, a live graph is exported as a plain one.
+    """
+    from .live import EXPORT_SNAPSHOTS
+
     page = (_EXPORT_DIR / "index.html").read_text(encoding="utf-8")
     script = (_EXPORT_DIR / "viewer.js").read_text(encoding="utf-8")
     style = (_EXPORT_DIR / "viewer.css").read_text(encoding="utf-8")
     # "</" would end an inline <script> early; "<\/" means the same inside JS and JSON strings.
-    data = graph.model_dump_json().replace("</", "<\\/")
+    data = graph.model_copy(update={"live": run is not None}).model_dump_json().replace("</", "<\\/")
+    history = ""
+    if run is not None:
+        saved = run.saved(EXPORT_SNAPSHOTS).model_dump_json(exclude={"graph"}).replace("</", "<\\/")
+        history = f"window.__NEUROLUME_RUN__ = {saved};"
     script = script.replace("</script", "<\\/script")
-    inline = f'<script>window.__NEUROLUME_GRAPH__ = {data};</script><script type="module">{script}</script>'
+    inline = f'<script>window.__NEUROLUME_GRAPH__ = {data};{history}</script><script type="module">{script}</script>'
     # Lambdas, so backslashes in the code aren't read as regex escapes.
     page = re.sub(r'<script[^>]*src="\./viewer\.js"></script>', lambda _: inline, page)
     page = re.sub(r'<link[^>]*href="\./viewer\.css">', lambda _: f"<style>{style}</style>", page)

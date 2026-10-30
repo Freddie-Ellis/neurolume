@@ -29,6 +29,7 @@ const system: Graph = {
   ],
   weights: null,
   feature_maps: null,
+  live: false,
 };
 
 describe("isSystem", () => {

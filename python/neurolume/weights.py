@@ -16,6 +16,8 @@ from .schema import WeightSample
 
 # Matches the viewer's largest "Edges per dense layer" setting, which picks how many of these are drawn.
 DEFAULT_K = 20000
+# Parameter values sampled for the live distribution chart (ParamStats.percentiles), for both frameworks.
+PARAM_SAMPLE = 20000
 
 SampleMode = Literal["topk", "random"]
 

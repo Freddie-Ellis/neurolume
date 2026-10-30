@@ -237,12 +237,21 @@ _Status (30 Oct 2026):_ passes. `vite build --mode export` makes one JS bundle (
 
 ### Phase 5 – Live training and Qt integration
 
-- [ ] `/ws` WebSocket on the server.
-- [ ] Callbacks: `neurolume.torch.TrainingHook` and a Keras callback that stream weight stats, activations and loss over the WebSocket.
-- [ ] Edge colour and opacity update live as weights change (redraw on each update, not per frame).
+Design: `docs/live-training.md` (the network is the dashboard; `neurolume.watch()`; architecture-only users see nothing new).
+
 - [ ] `neurolume.qt.NeurolumeWidget(QWebEngineView)` for embedding in the existing QtPy logger.
+- [x] L1 Pipe + run strip: `/ws` WebSocket, `watch()`, `log()`, message schema, loss sparkline. _(30 Oct 2026: `examples/live_training.py`; checked live in headless Edge and in a PySide6 widget, headline switched to accuracy.)_
+- [x] L2 Live weights: frozen edge set, edges update in place (redraw on each update, not per frame), Weight/Change toggle. _(30 Oct 2026: weights read in `log()` every `every_seconds`, no hooks needed; 21% of edge pixels changed over a short run in a PySide6 widget; overhead -0.3% median on the 784-512-256-10 MLP, i.e. within noise: `log()` 7 µs, a weight read 0.6 ms per 0.5 s. Gradients need hooks and come with L3.)_
+- [x] L3 Layer health: gradient/update stats, health line on panels, inspector Training section. _(30 Oct 2026: a model with LR 4 and Layer 2's ReLUs forced off shows `100% dead` on Layer 2 and `blocked` on the layers it starves, in a PySide6 widget; dead units are measured by a forward hook (never positive across the batch), not from gradients, which can't tell dead from starved. A full reading costs 4.3 ms per 0.5 s on the 784-512-256-10 MLP, about 0.85%. Health on overview cards waits for Systems in L7.)_
+- [x] L4 Metrics drawer + customisable layout: choose headline and pinned metrics, show/hide/combine charts, remembered per model. _(30 Oct 2026: charts with smoothing, log scale, hover readout; reorder with ↑/↓ rather than drag; `watch(pinned=, charts=)`; a changed layout (order, log scale, a pin) read back identical after a reload in the Qt widget.)_
+- [x] L3b Per-layer health replaced by whole-run views (user request, 30 Oct 2026): Training panel with a convergence verdict (improving / converged / overfitting), the validation − training gap, predictions vs truth (`live.predictions()`: scatter with R², or a confusion matrix), `log(split="val")`, and whole-model parameter charts (size, gradient size, update rate, value distribution). _(`examples/live_training.py` is called `overfitting` once validation turns up, with best validation at the step the chart shows.)_
+- [x] L5 Keras callback. _(30 Oct 2026: `examples/keras_live.py` trains the Keras MLP with `neurolume.keras.Live(x[:64])` in the same UI: weights, health, `loss/val` on the loss chart. Gradients on the torch backend only (Keras leaves them on each variable); on others health is judged from how fast weights move. Dead units come from running the sample through top-level ReLU layers.)_
+- [x] L6 History: timeline scrubbing, save/open runs, runs in `export_html`. _(30 Oct 2026: a finished run scrubbed back to step 0 shows the starting weights and `measuring`; `save()` → `open_run()` serves it again with its timeline; `export_html(session)` opens offline with 50 snapshots. Scrub only, no play button (nothing animates). 200 readings kept in memory.)_
+- [x] L7 Live feature-map activations; per-network metrics in Systems. _(30 Oct 2026: LeNet's slabs repaint as it trains, on the channels picked at the start, in place (no rebuild); maps are redrawn every 2 s or less often, kept under 2% of the time (ResNet-18 costs ~65 ms). `watch(system)` reads every network; `log(step, network="critic", loss=...)` → `loss/critic`; network cards show their worst layers and their own metrics: an actor-critic with a critic LR of 0.1 shows `98% dead` on the critic and `blocked` on the actor. Keras maps don't refresh yet.)_
 
 **Done when:** a training run shows weights changing in real time both in the browser and inside the QtPy app.
+
+_Status (30 Oct 2026):_ Qt widget built first (`python/neurolume/qt.py`, `examples/qt_widget.py`): the viewer renders fully inside a QWebEngineView (checked by grabbing a real PySide6 window). Its box is ticked with the phase, once live training shows in it.
 
 ### Phase 6 (stretch) – Transformers
 

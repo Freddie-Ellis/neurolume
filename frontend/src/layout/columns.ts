@@ -471,6 +471,12 @@ export interface LinkSegments {
   pairs: [number, number][];
   /** Brightness of each pair, 0 to 1. */
   strength: number[];
+  /**
+   * For live training: the drawn pair each sampled weight (`sample.pairs[i]`)
+   * feeds, or -1 if it isn't drawn, so `liveStrengths` can redo `strength`
+   * from new values without rebuilding the edges. Absent without weights.
+   */
+  lineOf?: Int32Array;
 }
 
 /**
@@ -499,9 +505,51 @@ export function linkSegments(link: LinkLayout, sample: WeightSample | undefined)
   const maxValue = Math.max(...strongest.values()) || 1;
   const pairs: [number, number][] = [];
   const strength: number[] = [];
+  const lineOfKey = new Map<number, number>();
   for (const [key, value] of [...strongest].sort((a, b) => b[1] - a[1]).slice(0, limits.weights)) {
+    lineOfKey.set(key, pairs.length);
     pairs.push([Math.floor(key / toShown), key % toShown]);
     strength.push(0.25 + 0.75 * (value / maxValue));
   }
-  return { pairs, strength };
+  const lineOf = Int32Array.from(sample.pairs, ([fromIndex, toIndex]) => lineOfKey.get(slotFor(fromIndex, fromUnits, fromShown) * toShown + slotFor(toIndex, link.to.units, toShown)) ?? -1);
+  return { pairs, strength, lineOf };
+}
+
+/**
+ * Brightness per drawn pair from new weight values (live training). Each pair
+ * takes its strongest |value|; by default, like `linkSegments`, scaled against
+ * the strongest overall to 0.25 to 1. `values[i]` is `sample.pairs[i]`'s.
+ *
+ * A live run passes a `look` with more contrast: a fixed `scale` (the layer's
+ * strongest starting weight), so a layer whose weights all grow brightens
+ * instead of being rescaled back, a lower `floor` and a `gamma` > 1, so
+ * middling weights sit darker and the strong ones stand out as they move.
+ */
+export function liveStrengths(lineOf: Int32Array, lines: number, values: ArrayLike<number>, look: StrengthLook = {}): Float32Array {
+  const { floor = 0.25, gamma = 1 } = look;
+  const strongest = new Float32Array(lines);
+  for (let i = 0; i < lineOf.length; i += 1) {
+    const line = lineOf[i];
+    if (line >= 0) strongest[line] = Math.max(strongest[line], Math.abs(values[i]));
+  }
+  let max = 0;
+  for (const value of strongest) max = Math.max(max, value);
+  const scale = look.scale || max || 1;
+  const low = look.low ?? 0;
+  const span = scale - low || 1;
+  const boost = look.boost ?? 1;
+  return strongest.map((value) => boost * (floor + (1 - floor) * Math.min(1, Math.max(0, value - low) / span) ** gamma));
+}
+
+/** How `liveStrengths` maps values to brightness: see there. */
+export interface StrengthLook {
+  scale?: number;
+  /** Values at or below this are as dim as the floor (default 0); with `scale`, the range brightness spreads over. */
+  low?: number;
+  /** Multiplies every strength: with a steep gamma, few lines lit but each brighter than the static view allows. */
+  boost?: number;
+  /** Live edges: use the drawn lines' starting range as `low` and `scale` (see `setLiveWeights` in render/edges.ts). */
+  fromStart?: boolean;
+  floor?: number;
+  gamma?: number;
 }

@@ -8,6 +8,7 @@ data-dependent control flow) fall back to a sequential walk of the leaf modules.
 
 from __future__ import annotations
 
+import math
 import operator
 import warnings
 from collections import Counter
@@ -20,8 +21,8 @@ from torch import fx, nn
 from torch.fx.passes.shape_prop import ShapeProp
 
 from ..feature_maps import feature_maps as encode_feature_maps
-from ..schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
-from ..weights import DEFAULT_K, SampleMode, sample_dense
+from ..schema import PERCENTILES, FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, NodeType, WeightSample
+from ..weights import DEFAULT_K, PARAM_SAMPLE, SampleMode, sample_dense
 from .base import carry_through_folds, fold_activations, is_shape, needs_sample_error
 
 ACTIVATION_MODULES: dict[type[nn.Module], str] = {
@@ -159,6 +160,94 @@ class _RecordingShapeProp(ShapeProp):
         if isinstance(result, torch.Tensor) and result.dim() == 4:  # [batch, channels, height, width]
             self.outputs[n.name] = result[0].detach().float().cpu()
         return result
+
+
+
+def live_sampler(model: nn.Module, samples: dict[str, WeightSample]) -> Callable[[int], dict[str, Any]]:
+    """For live training: a function of the step that reads the model as it trains.
+
+    It returns ``weights`` and ``gradients``, the current value and gradient of
+    every sampled connection (``samples``, from ``from_torch``, in the same
+    order, so the viewer updates the edges it already draws), and ``stats``
+    about all trainable parameters together (``ParamStats``): their size, their
+    gradient's size, how far they moved per step since the last call, and
+    percentiles of a fixed sample of ``PARAM_SAMPLE`` values. Computed on the
+    model's device; only plain numbers and small float32 arrays leave it.
+    Gradients are those of the last ``backward()``, so ``log()`` after
+    ``backward()`` (and before ``zero_grad()``) sees them.
+    """
+    picks: dict[str, tuple[nn.Parameter, torch.Tensor, torch.Tensor]] = {}
+    for name, module in model.named_modules():
+        node_id = name.replace(".", "_")
+        if isinstance(module, nn.Linear) and node_id in samples and samples[node_id].pairs:
+            inputs, outputs, _ = zip(*samples[node_id].pairs)
+            device = module.weight.device
+            picks[node_id] = (module.weight, torch.tensor(outputs, device=device), torch.tensor(inputs, device=device))
+    params = [param for param in model.parameters() if param.requires_grad]
+    total = sum(param.numel() for param in params) or 1
+    # The values read for the percentiles: the same ones every time, spread over the parameters by size.
+    generator = torch.Generator().manual_seed(0)
+    chosen = [
+        (param, torch.randint(param.numel(), (max(1, round(PARAM_SAMPLE * param.numel() / total)),), generator=generator).to(param.device))
+        for param in params
+    ]
+    quantiles = torch.tensor([q / 100 for q in PERCENTILES])
+    previous: tuple[int, list[torch.Tensor]] | None = None
+
+    def norm(tensors: list[torch.Tensor]) -> float:
+        return float(torch.stack([t.float().pow(2).sum() for t in tensors]).sum().sqrt()) if tensors else 0.0
+
+    def read(step: int) -> dict[str, Any]:
+        nonlocal previous
+        weights, gradients = {}, {}
+        with torch.no_grad():
+            for node_id, (weight, rows, columns) in picks.items():
+                weights[node_id] = weight.detach()[rows, columns].float().cpu().numpy()
+                if weight.grad is not None:
+                    gradients[node_id] = weight.grad.detach()[rows, columns].float().cpu().numpy()
+            current = [param.detach() for param in params]
+            grads = [param.grad.detach() for param in params if param.grad is not None]
+            weight_norm = norm(current)
+            update = None
+            if previous is not None and step > previous[0]:
+                before = norm(previous[1])
+                update = norm([now - then for now, then in zip(current, previous[1])]) / before / (step - previous[0]) if before > 0 else None
+            previous = (step, [t.clone() for t in current])
+            values = torch.cat([param.detach().flatten()[index].float() for param, index in chosen]).cpu() if chosen else torch.zeros(1)
+            finite = bool(torch.isfinite(values).all()) and math.isfinite(weight_norm)
+        stats = {
+            "weight_norm": weight_norm if finite else None,
+            "grad_norm": norm(grads) if grads else None,
+            "update_ratio": update if finite else None,
+            "finite": finite,
+            "percentiles": torch.quantile(values, quantiles).tolist() if finite else [],
+        }
+        return {"weights": weights, "gradients": gradients, "stats": stats}
+
+    return read
+
+
+def live_maps(model: nn.Module, sample: Any, channels: dict[str, list[int]]) -> Callable[[], dict[str, FeatureMaps]]:
+    """For live training: a function that redraws the feature maps of ``sample`` with the current weights.
+
+    Traces and runs the model as ``from_torch`` does (in eval mode, without
+    gradients, folded activations included), so the maps match the first ones;
+    ``channels`` are each node's ``FeatureMaps.channels`` from the graph.
+    """
+    inputs = _as_inputs(sample)
+
+    def read() -> dict[str, FeatureMaps]:
+        was_training = model.training
+        model.eval()
+        try:
+            with torch.no_grad():
+                nodes, edges, _, _, outputs = _trace_with_fx(model, inputs)
+        finally:
+            model.train(was_training)
+        outputs = carry_through_folds(edges, fold_activations(nodes, edges)[0], outputs)
+        return {node_id: encode_feature_maps(outputs[node_id].numpy(), order) for node_id, order in channels.items() if node_id in outputs}
+
+    return read
 
 
 # A group is split into its own sub-modules only when it holds more layers than this.

@@ -7,7 +7,7 @@ function node(id: string, type: GraphNode["type"], group: string | null = null, 
 }
 
 function graph(nodes: GraphNode[]): Graph {
-  return { schema_version: "1.1", model: { name: "m", framework: "pytorch", total_params: 0 }, nodes, edges: [], groups: [], weights: null, feature_maps: null };
+  return { schema_version: "1.1", model: { name: "m", framework: "pytorch", total_params: 0 }, nodes, edges: [], groups: [], weights: null, feature_maps: null, live: false };
 }
 
 describe("layer names", () => {

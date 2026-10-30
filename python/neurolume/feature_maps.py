@@ -23,14 +23,18 @@ MAX_CHANNELS = 12
 MAX_SIZE = 32
 
 
-def feature_maps(values: npt.ArrayLike) -> FeatureMaps:
-    """Encode a [channels, height, width] array (one example, channels first)."""
+def feature_maps(values: npt.ArrayLike, channels: list[int] | None = None) -> FeatureMaps:
+    """Encode a [channels, height, width] array (one example, channels first).
+
+    ``channels`` picks which channels, in order (live training keeps the ones
+    chosen at the start, so the slabs don't swap pictures as it learns).
+    """
     array = np.asarray(values, dtype=np.float32)
     if array.ndim != 3:
         raise ValueError(f"expected [channels, height, width], got shape {array.shape}")
 
     # Most active first: a channel that barely responds to this input says little.
-    order = np.argsort(-array.std(axis=(1, 2)), kind="stable")[:MAX_CHANNELS]
+    order = np.array(channels) if channels is not None else np.argsort(-array.std(axis=(1, 2)), kind="stable")[:MAX_CHANNELS]
     array = array[order]
     factor = math.ceil(max(array.shape[1], array.shape[2]) / MAX_SIZE)
     if factor > 1:

@@ -18,6 +18,8 @@ dependencies = [
 torch = ["torch>=2.0"]
 tensorflow = ["tensorflow>=2.15"]
 keras = ["keras>=3.0"]  # Keras 3 runs on PyTorch too: set KERAS_BACKEND=torch
+# The Qt widget (neurolume.qt) also needs a binding with QtWebEngine: PySide6, or PyQt6 + PyQt6-WebEngine.
+qt = ["qtpy>=2.4"]
 dev = ["pytest>=8.0"]
 examples = ["torchvision>=0.17"]  # examples/resnet.py; its test skips without it
 

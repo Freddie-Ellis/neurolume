@@ -19,7 +19,7 @@
 import * as THREE from "three";
 import { limits } from "../limits";
 import type { ArcEnd, ArcLayout, BandLayout, ColumnLayout, LinkLayout, StubLayout } from "../layout/columns";
-import { ARC_LANE_GAP, PANEL_GAP, linkSegments, slotFor } from "../layout/columns";
+import { ARC_LANE_GAP, type LinkSegments, PANEL_GAP, type StrengthLook, liveStrengths, linkSegments, slotFor } from "../layout/columns";
 import { type CurveShape, sampleCurve } from "../layout/curves";
 import { cellLinks, flattenedCell, frontSlab, sweepOf } from "../layout/maps";
 import { strandCount } from "../layout/system";
@@ -63,6 +63,13 @@ export interface EdgeBundle {
   ends: [string, string];
   lines: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   baseOpacity: number;
+  /**
+   * Dense links in a live run (neurolume.watch): what `setLiveWeights` needs to
+   * rebrighten the lines in place. `layer` is the node whose `Graph.weights`
+   * they draw, `lineOf` maps its sampled pairs to lines, and each vertex keeps
+   * its line and its fade (alpha before strength).
+   */
+  live?: { layer: string; lineOf: Int32Array; vertexLine: Uint32Array; fade: Float32Array; startRange: [number, number] };
 }
 
 /**
@@ -85,8 +92,9 @@ interface Curve {
 type Line = { points: THREE.Vector3[]; strength: number };
 
 /** `recorded` is the source layer's feature maps, if any, so edges leave from the slab showing their channel. */
-export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, theme: Theme, recorded?: FeatureMaps): EdgeBundle {
-  const curves = link.from.maps && link.to.maps ? mapCurves(link) : link.from.maps ? cellCurves(link, sample, recorded) : neuronCurves(link, sample);
+export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, theme: Theme, recorded?: FeatureMaps, live = false): EdgeBundle {
+  const segments = link.from.maps ? null : linkSegments(link, sample);
+  const curves = link.from.maps && link.to.maps ? mapCurves(link) : link.from.maps ? cellCurves(link, sample, recorded) : neuronCurves(link, segments!);
   const fade = { start: link.from.maps ? FADE : 0, end: link.to.maps ? FADE : 0 };
   const extent = Math.max(...link.from.slots.map(Math.abs), ...link.to.slots.map(Math.abs));
   const lines = curves.map((curve, i) => {
@@ -105,7 +113,48 @@ export function buildEdges(link: LinkLayout, sample: WeightSample | undefined, t
     points.push([curve.x1, curve.y1]);
     return { points: organicPath(points, curve.z0, curve.z1, extent, i + link.from.index * 7919, calm), strength: curve.strength };
   });
-  return bundle(link.t, [link.from.node.id, link.to.node.id], lines, curves.length, theme, fade);
+  const edges = bundle(link.t, [link.from.node.id, link.to.node.id], lines, curves.length, theme, fade);
+  if (live && segments?.lineOf && sample) keepForLive(edges, link.to.node.id, segments.lineOf, lines, sample);
+  return edges;
+}
+
+/**
+ * Store what setLiveWeights needs: each vertex's line and its fade (the alpha
+ * `bundle` gave it, before strength), and the range of the drawn lines'
+ * starting |weight| (each line's strongest pair).
+ */
+function keepForLive(edges: EdgeBundle, layer: string, lineOf: Int32Array, lines: Line[], sample: WeightSample): void {
+  const alpha = edges.lines.geometry.getAttribute("color");
+  const vertexLine = new Uint32Array(alpha.count);
+  const fade = new Float32Array(alpha.count);
+  let vertex = 0;
+  lines.forEach(({ points, strength }, line) => {
+    for (let k = 0; k < 2 * (points.length - 1); k += 1, vertex += 1) {
+      vertexLine[vertex] = line;
+      fade[vertex] = alpha.getW(vertex) / strength;
+    }
+  });
+  const start = new Float32Array(lines.length);
+  sample.pairs.forEach((pair, i) => {
+    if (lineOf[i] >= 0) start[lineOf[i]] = Math.max(start[lineOf[i]], Math.abs(pair[2]));
+  });
+  edges.live = { layer, lineOf, vertexLine, fade, startRange: [Math.min(...start), Math.max(...start)] };
+}
+
+/**
+ * Live training: rebrighten a dense link's lines from new values (`values[i]`
+ * for its sample's pair i). With `fromStart`, brightness spreads over the
+ * drawn lines' starting range (the dimmest drawn weight dim, the strongest
+ * bright), so growth, shrinking and reshuffling all show.
+ */
+export function setLiveWeights(edges: EdgeBundle, values: ArrayLike<number>, look?: StrengthLook): void {
+  if (!edges.live) return;
+  const { lineOf, vertexLine, fade, startRange } = edges.live;
+  const range = look?.fromStart ? { low: startRange[0], scale: startRange[1] } : {};
+  const strength = liveStrengths(lineOf, vertexLine.length ? vertexLine[vertexLine.length - 1] + 1 : 0, values, { ...look, ...range });
+  const alpha = edges.lines.geometry.getAttribute("color");
+  for (let v = 0; v < vertexLine.length; v += 1) alpha.setW(v, strength[vertexLine[v]] * fade[v]);
+  alpha.needsUpdate = true;
 }
 
 /** Where an edge crosses a band: through a merge node's neck, or its place in a flatten strip. */
@@ -272,8 +321,7 @@ function mapCurves(link: LinkLayout): Curve[] {
 }
 
 /** Neuron to neuron: the sampled weights, merged onto the drawn neurons. */
-function neuronCurves(link: LinkLayout, sample: WeightSample | undefined): Curve[] {
-  const { pairs, strength } = linkSegments(link, sample);
+function neuronCurves(link: LinkLayout, { pairs, strength }: LinkSegments): Curve[] {
   return pairs.map(([fromSlot, toSlot], i) => ({
     x0: link.from.exitX,
     y0: link.from.slots[fromSlot],

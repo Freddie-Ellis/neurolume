@@ -41,6 +41,8 @@ export class Viewer {
   private needsRender = true;
   /** Called after the user zooms with the scroll wheel (not after fitTo), with the new zoom and the cursor position. */
   onUserZoom: ((zoom: number, clientX: number, clientY: number) => void) | null = null;
+  /** Called after the view changes size (a browser window or a Qt widget being laid out). */
+  onResize: (() => void) | null = null;
   /** Scroll zooming is ignored until this time (performance.now() ms), then eases back in. */
   private zoomPausedUntil = 0;
   /** Screen space (CSS px) at the top that fitTo keeps clear, e.g. for the title card. */
@@ -98,6 +100,11 @@ export class Viewer {
     this.place(this.fitTarget(bounds, margin));
   }
 
+  /** The zoom fitTo would pick for `bounds` at the current size, without moving the camera. */
+  fitZoomFor(bounds: Bounds, margin = 0.88): number {
+    return this.fitTarget(bounds, margin).zoom;
+  }
+
   /** Where `bounds` are on screen now: centre (CSS px from the middle of the view, y up) and size. */
   screenRect(bounds: Bounds): { x: number; y: number; width: number; height: number } {
     const zoom = this.camera.zoom;
@@ -109,9 +116,14 @@ export class Viewer {
     };
   }
 
-  /** Place the camera so `bounds` fit inside `rect` (as from screenRect), centred on it. */
+  /**
+   * Place the camera so `bounds` cover the same screen area as `rect` (as from
+   * screenRect), centred on it, but never further out than `minZoom`. Area, not
+   * "fit inside": a boxy card framed in a wide, flat rect would shrink to its height.
+   */
   frameIn(bounds: Bounds, rect: { x: number; y: number; width: number; height: number }): void {
-    const zoom = clamp(Math.min(rect.width / Math.max(bounds.right - bounds.left, 1), rect.height / Math.max(bounds.top - bounds.bottom, 1)), MIN_ZOOM, MAX_ZOOM);
+    const area = (rect.width * rect.height) / (Math.max(bounds.right - bounds.left, 1) * Math.max(bounds.top - bounds.bottom, 1));
+    const zoom = clamp(Math.sqrt(area), Math.max(MIN_ZOOM, this.minZoom), MAX_ZOOM);
     this.place({ zoom, x: (bounds.left + bounds.right) / 2 - rect.x / zoom, y: (bounds.top + bounds.bottom) / 2 - rect.y / zoom });
   }
 
@@ -177,6 +189,7 @@ export class Viewer {
     this.labelRenderer.setSize(width, height);
     this.composer.setSize(width, height);
     this.requestRender();
+    this.onResize?.();
   }
 
   private renderIfNeeded(): void {
@@ -218,7 +231,10 @@ export class Viewer {
         if (strength === 0) return;
         // Zoom towards the cursor: keep the world point under it fixed.
         const before = this.toWorld(event.clientX, event.clientY);
-        const zoom = clamp(this.camera.zoom * Math.exp(-event.deltaY * 0.0015 * strength), this.minZoom, MAX_ZOOM);
+        // A wheel notch is about 100 in Chrome but 60 in Qt's web view: count any notch-sized step as
+        // at least 100, so a wheel zooms the same everywhere; small touchpad steps stay fine-grained.
+        const delta = Math.abs(event.deltaY) >= 40 ? Math.sign(event.deltaY) * Math.max(Math.abs(event.deltaY), 100) : event.deltaY;
+        const zoom = clamp(this.camera.zoom * Math.exp(-delta * 0.0015 * strength), this.minZoom, MAX_ZOOM);
         if (zoom === this.camera.zoom) return; // at a limit: don't drift the view
         this.camera.zoom = zoom;
         this.camera.updateProjectionMatrix();

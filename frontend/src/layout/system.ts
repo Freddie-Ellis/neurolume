@@ -212,6 +212,7 @@ export function subgraph(graph: Graph, groupId: string): Graph {
     groups,
     weights: Object.keys(weights).length > 0 ? weights : null,
     feature_maps: Object.keys(featureMaps).length > 0 ? featureMaps : null,
+    live: graph.live,
   };
 }
 

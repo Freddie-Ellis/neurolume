@@ -17,7 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 
-from neurolume.schema import SCHEMA_VERSION, Graph  # noqa: E402
+from neurolume.schema import LIVE_MESSAGES, SCHEMA_VERSION, Graph, SavedRun  # noqa: E402
 
 OUTPUT = ROOT / "frontend" / "src" / "schema.ts"
 
@@ -26,6 +26,8 @@ def ts_type(schema: dict[str, Any]) -> str:
     """Translate one JSON Schema fragment into a TypeScript type expression."""
     if "$ref" in schema:
         return schema["$ref"].rsplit("/", 1)[-1]
+    if "const" in schema:
+        return f'"{schema["const"]}"'
     if "enum" in schema:
         return " | ".join(f'"{value}"' for value in schema["enum"])
     if "anyOf" in schema:
@@ -60,6 +62,10 @@ def generate() -> str:
     schema = Graph.model_json_schema(mode="serialization")
     definitions = dict(schema.pop("$defs"))
     definitions["Graph"] = schema
+    for message in (*LIVE_MESSAGES, SavedRun):  # live-training messages and saved runs share the file, and the version
+        message_schema = message.model_json_schema(mode="serialization")
+        definitions.update(message_schema.pop("$defs", {}))
+        definitions[message.__name__] = message_schema
 
     node_type = definitions["GraphNode"]["properties"]["type"]
     parts = [

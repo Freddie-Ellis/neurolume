@@ -121,6 +121,7 @@ describe("layoutGraph with feature maps", () => {
     groups: [],
     weights: null,
     feature_maps: null,
+    live: false,
   };
   const { columns } = layoutGraph(cnn);
 
@@ -169,6 +170,7 @@ describe("spacing around feature-map stacks", () => {
       groups: [],
       weights: null,
       feature_maps: null,
+      live: false,
     };
     const layout = layoutGraph(graph);
     for (const column of layout.columns) {

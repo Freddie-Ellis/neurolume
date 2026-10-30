@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.3",
+  "schema_version": "1.7",
   "model": {
     "name": "MLP",
     "framework": "pytorch",
@@ -189,5 +189,6 @@
   ],
   "groups": [],
   "weights": null,
-  "feature_maps": null
+  "feature_maps": null,
+  "live": false
 }

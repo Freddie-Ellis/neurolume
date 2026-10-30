@@ -6,6 +6,7 @@ import {
   MAX_NEURON_SPACING,
   layoutGraph,
   linkSegments,
+  liveStrengths,
   neuronSlots,
   slotFor,
   unitCount,
@@ -30,6 +31,7 @@ const mlp: Graph = {
   groups: [],
   weights: null,
   feature_maps: null,
+  live: false,
 };
 
 describe("unitCount", () => {
@@ -211,5 +213,25 @@ describe("linkSegments", () => {
     const { pairs, strength } = linkSegments(link, sample);
     expect(pairs).toEqual([[0, 0], [63, 63]]);
     expect(strength[0]).toBe(1); // |-1.0| is the strongest in the merged slot
+  });
+});
+
+describe("liveStrengths", () => {
+  it("redoes a link's brightness from new values, like linkSegments", () => {
+    const link = layoutGraph(mlp).links[0];
+    const sample = { mode: "topk" as const, k: 3, pairs: [[0, 0, 0.5], [1, 1, -1.0], [783, 511, 0.1]] as [number, number, number][] };
+    const { pairs, strength, lineOf } = linkSegments(link, sample);
+    liveStrengths(lineOf!, pairs.length, [0.5, -1.0, 0.1]).forEach((value, i) => expect(value).toBeCloseTo(strength[i]));
+    // Training made the first connection the strongest: it brightens, the other dims.
+    const [first, second] = liveStrengths(lineOf!, pairs.length, [2, 0.5, 0.1]);
+    expect(first).toBe(1);
+    expect(second).toBeLessThan(0.5);
+  });
+
+  it("spreads brightness over a range, so weights that all start strong still differ", () => {
+    const lineOf = Int32Array.from([0, 1, 2]);
+    const look = { floor: 0, gamma: 1, low: 0.75, scale: 1 };
+    expect(Array.from(liveStrengths(lineOf, 3, [0.75, 0.875, 1], look))).toEqual([0, 0.5, 1]);
+    expect(Array.from(liveStrengths(lineOf, 3, [0.5, 2, 1], look))).toEqual([0, 1, 1]); // clamped at both ends
   });
 });

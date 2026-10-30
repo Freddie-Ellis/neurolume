@@ -49,6 +49,7 @@ class System:
     def __init__(self, name: str = "System") -> None:
         self.name = name
         self._networks: dict[str, Graph] = {}
+        self._models: dict[str, tuple[Any, Any]] = {}  # name -> (model, sample), for watch() to read as it trains
         self._labels: dict[str, str] = {}
         self._blocks: dict[str, GraphNode] = {}
         self._links: list[_Link] = []
@@ -63,6 +64,7 @@ class System:
 
         self._check_name(name)
         self._networks[name] = to_graph(model, sample, **adapter_options)
+        self._models[name] = (model, sample)
         self._labels[name] = label or name
         self._order.append(name)
         return Component(name, "network")
