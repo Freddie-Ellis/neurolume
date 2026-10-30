@@ -8,7 +8,7 @@
  * Clicking a block opens the inspector, which also shows its notes.
  */
 import * as THREE from "three";
-import { sampleCurve } from "../layout/curves";
+import { type CurvePoint, type CurveShape, sampleCurve } from "../layout/curves";
 import { type Card, type CardLink, type MiniItem, type Miniature, type SystemLayout, isLayer, isOutside, strandCount, strandSlots } from "../layout/system";
 import type { Theme } from "../theme";
 import { formatCount, formatFramework, formatParams, formatShape } from "../ui/format";
@@ -40,6 +40,9 @@ const OUTSIDE_FADE = 0.7;
 const OUTSIDE_CHIP = 80;
 /** About how many strands a link into a dense layer card draws, fanning out to its neurons. */
 const DENSE_STRANDS = 60;
+/** How far out a back link leaves its card and enters the target, and how far above the frame's bottom it loops. */
+const BACK_LINK_REACH = 220;
+const BACK_LINK_MARGIN = 20;
 
 export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: string) => void): Network {
   const root = new THREE.Group();
@@ -64,7 +67,9 @@ export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: 
     pickables.push(pickable);
   }
   const rankCount = Math.max(...layout.cards.map((card) => card.rank)) + 1;
-  for (const link of layout.links) root.add(...buildLink(link, theme, rankCount, ports));
+  // Back links loop just inside the bottom of the frame, which layoutSystem left room for.
+  const floor = layout.bounds.bottom + BACK_LINK_MARGIN;
+  for (const link of layout.links) root.add(...buildLink(link, theme, rankCount, ports, floor));
   root.add(buildPreviewLines(previewLines, previewColours, theme), buildDots(dots, theme), buildSlabFills(fills, theme));
 
   return { root, pickables, edges: [], theme };
@@ -395,11 +400,11 @@ function buildDots(dots: Dot[], theme: Theme): THREE.InstancedMesh {
  * running from the right edge of one card to the left edge of the next. A link
  * whose shape is unknown falls back to a single ribbon with an arrowhead.
  */
-function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<Card, Anchors>): THREE.Object3D[] {
+function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<Card, Anchors>, floor: number): THREE.Object3D[] {
   const x0 = link.from.x + link.from.width / 2;
   const x1 = link.to.x - link.to.width / 2;
   const count = strandCount(link.shape);
-  const objects = count > 0 ? [buildStrands(link, count, theme, rankCount, ports)] : buildRibbon(link, theme);
+  const objects = count > 0 ? [buildStrands(link, count, theme, rankCount, ports, floor)] : buildRibbon(link, theme, floor);
 
   // A link to or from outside this level names where it goes, near the card that is shown.
   const outside = isOutside(link.from.node) ? link.from.node : isOutside(link.to.node) ? link.to.node : null;
@@ -408,7 +413,7 @@ function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<C
   // A fixed distance from the shown card, since the other end is far off screen.
   const span = Math.max(x1 - x0, 1);
   const along = outside === link.from.node ? 1 - OUTSIDE_CHIP / span : outside === link.to.node ? OUTSIDE_CHIP / span : 0.5;
-  const point = sampleCurve(x0, link.from.y, x1, link.to.y, 40, { handle: 0.5 })[Math.round(along * 40)];
+  const point = linkCurve(link, x0, link.from.y, x1, link.to.y, 40, { handle: 0.5 }, floor)[Math.round(along * 40)];
   const chip = label("link-chip", escapeHtml(caption));
   chip.position.set(point.x, point.y, 5);
   return [...objects, chip];
@@ -419,7 +424,7 @@ function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<C
  * like a cable. At a single-layer card (`ports`) strands instead converge on
  * its neurons or stack and leave from them, so they run through the layer.
  */
-function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: number, ports: Map<Card, Anchors>): THREE.LineSegments {
+function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: number, ports: Map<Card, Anchors>, floor: number): THREE.LineSegments {
   const x0 = link.from.x + link.from.width / 2;
   const x1 = link.to.x - link.to.width / 2;
   const starts = strandSlots(count, link.from);
@@ -454,7 +459,7 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
   pairs.forEach(([[sx, sy, sz = 0], [ex, ey, ez = 0]], i) => {
     const seed = pseudoRandom(i + link.from.rank * 7919 + link.to.y);
     const shape = { handle: 0.35 + 0.3 * pseudoRandom(seed * 1e4 + 1), bend: (pseudoRandom(seed * 1e4 + 2) - 0.5) * 2 * STRAND_BEND };
-    const points = sampleCurve(sx, sy, ex, ey, STRAND_SEGMENTS, shape);
+    const points = linkCurve(link, sx, sy, ex, ey, STRAND_SEGMENTS, shape, floor);
     for (let s = 0; s < STRAND_SEGMENTS; s += 1) {
       for (const [k, point] of [[s, points[s]], [s + 1, points[s + 1]]] as const) {
         const colour = gradientColour(theme.edgeGradient, t0 + (t1 - t0) * point.along);
@@ -482,6 +487,24 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
   return strands;
 }
 
+/**
+ * A link's path. Forward links curve left to right; a back link (closing a
+ * cycle) leaves its card to the right, loops down to `floor` under the cards
+ * and comes back into the target from the left.
+ */
+function linkCurve(link: CardLink, sx: number, sy: number, ex: number, ey: number, segments: number, shape: CurveShape, floor: number): CurvePoint[] {
+  if (!link.back) return sampleCurve(sx, sy, ex, ey, segments, shape);
+  // Both handles at height c put the curve's midpoint at 0.125 (sy + ey) + 0.75 c, which is `floor`.
+  const c = (floor - 0.125 * (sy + ey)) / 0.75 + (shape.bend ?? 0);
+  const points: CurvePoint[] = [];
+  for (let i = 0; i <= segments; i += 1) {
+    const t = i / segments;
+    const [a, b, d, e] = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3];
+    points.push({ x: a * sx + b * (sx + BACK_LINK_REACH) + d * (ex - BACK_LINK_REACH) + e * ex, y: a * sy + (b + d) * c + e * ey, along: t });
+  }
+  return points;
+}
+
 /** A link to or from a neighbour outside this level fades out towards it, off screen; others are opaque. */
 function outsideAlpha(link: CardLink, along: number): number {
   if (isOutside(link.from.node)) return Math.min(1, along / OUTSIDE_FADE);
@@ -490,14 +513,14 @@ function outsideAlpha(link: CardLink, along: number): number {
 }
 
 /** A curved ribbon from the right edge of one card to an arrowhead on the left edge of the next. */
-function buildRibbon(link: CardLink, theme: Theme): THREE.Object3D[] {
+function buildRibbon(link: CardLink, theme: Theme, floor: number): THREE.Object3D[] {
   const x0 = link.from.x + link.from.width / 2;
   const y0 = link.from.y;
   const tipX = link.to.x - link.to.width / 2;
   const y1 = link.to.y;
   // To or from outside this level, it fades out towards that end, and the arrowhead goes off screen with it.
   const toOutside = isOutside(link.to.node);
-  const points = sampleCurve(x0, y0, toOutside ? tipX : tipX - ARROW_LENGTH, y1, 32, { handle: 0.5 });
+  const points = linkCurve(link, x0, y0, toOutside ? tipX : tipX - ARROW_LENGTH, y1, 32, { handle: 0.5 }, floor);
   const material = new THREE.MeshBasicMaterial({ color: theme.panelBorderHover, transparent: true, opacity: 0.75, vertexColors: true });
 
   const ribbon = new THREE.Mesh(ribbonGeometry(points, LINK_WIDTH, (along) => outsideAlpha(link, along)), material);

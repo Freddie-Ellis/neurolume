@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, WeightSample
 
@@ -32,13 +32,26 @@ class Component:
     kind: str  # "network" or "block"
 
 
+@dataclass(frozen=True)
+class _Link:
+    """One `System.connect` call."""
+
+    source: Component
+    target: Component
+    label: str | None
+    to: str | None
+    from_: str | None
+    shape: list[int] | None
+
+
 class System:
     def __init__(self, name: str = "System") -> None:
         self.name = name
         self._networks: dict[str, Graph] = {}
         self._labels: dict[str, str] = {}
         self._blocks: dict[str, GraphNode] = {}
-        self._links: list[tuple[Component, Component, str | None]] = []
+        self._links: list[_Link] = []
+        self._order: list[str] = []  # component names in the order they were added
 
     def add(self, name: str, model: Any, sample: Any = None, *, label: str | None = None, **adapter_options: Any) -> Component:
         """Add a network: a PyTorch or Keras model, or a ready-made Graph.
@@ -50,6 +63,7 @@ class System:
         self._check_name(name)
         self._networks[name] = to_graph(model, sample, **adapter_options)
         self._labels[name] = label or name
+        self._order.append(name)
         return Component(name, "network")
 
     def block(
@@ -81,14 +95,34 @@ class System:
             # Markdown would otherwise read as a code block.
             notes=inspect.cleandoc(notes) if notes else None,
         )
+        self._order.append(name)
         return Component(name, "block")
 
-    def connect(self, source: Component, target: Component, *, label: str | None = None) -> None:
-        """Feed the output of `source` into the input of `target`."""
+    def connect(
+        self,
+        source: Component,
+        target: Component,
+        *,
+        label: str | None = None,
+        to: str | None = None,
+        from_: str | None = None,
+        shape: list[int] | None = None,
+    ) -> None:
+        """Feed the output of `source` into the input of `target`.
+
+        For a network with several inputs, `to` names the one to feed (a
+        PyTorch input is named after its `forward` argument, e.g. ``to="act"``);
+        `from_` likewise picks one of several outputs. `shape` overrides the
+        shape the link carries, e.g. when a block sends different things to
+        different targets.
+        """
         for component in (source, target):
             if component.name not in self._networks and component.name not in self._blocks:
                 raise ValueError(f"{component.name!r} is not part of this system")
-        self._links.append((source, target, label))
+        link = _Link(source, target, label, to, from_, shape)
+        self._exit_node(source, from_)  # fail now, not in to_graph, when a name is wrong
+        self._entry_node(target, to)
+        self._links.append(link)
 
     def to_graph(self) -> Graph:
         nodes: list[GraphNode] = []
@@ -97,7 +131,13 @@ class System:
         weights: dict[str, WeightSample] = {}
         feature_maps: dict[str, FeatureMaps] = {}
 
-        for name, graph in self._networks.items():
+        # Components in the order they were added: the viewer breaks feedback
+        # loops starting from the first one, so it reads left to right.
+        for name in self._order:
+            if name in self._blocks:
+                nodes.append(self._blocks[name])
+                continue
+            graph = self._networks[name]
             prefix = f"{name}{SEPARATOR}"
             groups.append(GraphGroup(id=name, label=self._labels[name], framework=graph.model.framework))
             for group in graph.groups:
@@ -111,16 +151,15 @@ class System:
                 weights[prefix + node_id] = sample
             for node_id, maps in (graph.feature_maps or {}).items():
                 feature_maps[prefix + node_id] = maps
-        nodes.extend(self._blocks.values())
 
-        for source, target, label in self._links:
-            exit_node = self._exit_node(source)
+        for link in self._links:
+            exit_node = self._exit_node(link.source, link.from_)
             edges.append(
                 GraphEdge(
                     source=exit_node.id,
-                    target=self._entry_node(target).id,
-                    tensor_shape=exit_node.output_shape,
-                    label=label,
+                    target=self._entry_node(link.target, link.to).id,
+                    tensor_shape=link.shape if link.shape is not None else exit_node.output_shape,
+                    label=link.label,
                 )
             )
 
@@ -144,25 +183,33 @@ class System:
         if name in self._networks or name in self._blocks:
             raise ValueError(f"a component called {name!r} already exists")
 
-    def _exit_node(self, component: Component) -> GraphNode:
+    def _exit_node(self, component: Component, name: str | None = None) -> GraphNode:
         """The node whose output leaves a component: the block itself, or the last
         node of a network that feeds nothing else (its output, or for a System
-        added as a network, its last end, such as a prediction block)."""
-        if component.name in self._blocks:
-            return self._blocks[component.name]
-        graph = self._networks[component.name]
-        feeds = {edge.source for edge in graph.edges}
-        ends = [node for node in graph.nodes if node.id not in feeds]
-        node = ends[-1] if ends else graph.nodes[-1]
-        return node.model_copy(update={"id": f"{component.name}{SEPARATOR}{node.id}"})
+        added as a network, its last end, such as a prediction block). `name`
+        picks one of those ends by id."""
+        feeds = {edge.source for edge in self._networks[component.name].edges} if component.name in self._networks else set()
+        return self._end(component, name, "from_", lambda node: node.id not in feeds, last=True)
 
-    def _entry_node(self, component: Component) -> GraphNode:
+    def _entry_node(self, component: Component, name: str | None = None) -> GraphNode:
         """The node that receives input: the block itself, or the first node of a
-        network that nothing feeds (its input, or for a System, its first source)."""
+        network that nothing feeds (its input, or for a System, its first source).
+        `name` picks one of those inputs by id."""
+        fed = {edge.target for edge in self._networks[component.name].edges} if component.name in self._networks else set()
+        return self._end(component, name, "to", lambda node: node.id not in fed, last=False)
+
+    def _end(self, component: Component, name: str | None, argument: str, is_end: Callable[[GraphNode], bool], *, last: bool) -> GraphNode:
         if component.name in self._blocks:
+            if name is not None:
+                raise ValueError(f"{argument}={name!r}: {component.name!r} is a block, which has only one input and output")
             return self._blocks[component.name]
         graph = self._networks[component.name]
-        fed = {edge.target for edge in graph.edges}
-        starts = [node for node in graph.nodes if node.id not in fed]
-        node = starts[0] if starts else graph.nodes[0]
+        ends = [node for node in graph.nodes if is_end(node)] or [graph.nodes[-1] if last else graph.nodes[0]]
+        if name is None:
+            node = ends[-1] if last else ends[0]
+        else:
+            matches = [node for node in ends if node.id == name]
+            if not matches:
+                raise ValueError(f"{argument}={name!r} is not one of {component.name!r}'s names: {', '.join(node.id for node in ends)}")
+            node = matches[0]
         return node.model_copy(update={"id": f"{component.name}{SEPARATOR}{node.id}"})

@@ -11,7 +11,7 @@
 | `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling, and after a Flatten of channels-last maps their rows are reordered to channels-first (`_rows_channels_first`), so weight indices mean the same map cell in both frameworks |
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
 | `feature_maps.py` | `feature_maps()`: a `[C, H, W]` array → `FeatureMaps` (12 most active channels first, ≤32×32, 0-255 per channel, base64) |
-| `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=)` |
+| `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=, to=, from_=, shape=)` (`to`/`from_` pick an input/output by node id, e.g. a `forward` argument; `shape` overrides the link's tensor shape) |
 | `server.py` | Tornado app (like SnakeViz: one dependency, WebSockets built in for Phase 5), `show()` (server on a background thread with its own event loop, free port), `demo_graph()` fallback |
 | `demo.py` | `demo_model()` / `demo_input()` (torch imported inside), `sample_digit()`: a drawn "7" (numpy) for CNN examples |
 
@@ -67,6 +67,7 @@ order) · shape/param helpers.
   next one's first node that nothing feeds (its `input`). Using ends rather than
   node types makes a System added to a System (`add("pipe", other_system)`)
   link to its own end blocks, e.g. its sensor and prediction.
+- `to_graph()` emits components in the order they were added (`_order`), blocks included: the viewer breaks feedback loops starting from the first card, so the first component added is the leftmost.
 - Block `notes` (schema 1.2, `GraphNode.notes`) is Markdown with `$...$` /
   `$$...$$` LaTeX, dedented with `inspect.cleandoc`; the viewer shows it in the inspector when the block is clicked.
 - A model that auto-groups (e.g. an autoencoder) added to a System keeps its groups one level down (`ae/encoder`, parent `ae`); the viewer opens `ae` as a nested overview.

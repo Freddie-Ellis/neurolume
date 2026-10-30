@@ -26,6 +26,8 @@ const OUTSIDE_ROOM = 160;
 export const LAYER_CARD = { width: 170, height: 180 };
 /** Strands use at most this fraction of a card's height. */
 const STRAND_SPREAD = 0.6;
+/** How far below the lowest card a back link (one closing a cycle) loops. */
+export const BACK_LINK_DROP = 90;
 
 export interface Card {
   id: string;
@@ -78,6 +80,8 @@ export interface CardLink {
   to: Card;
   label: string | null;
   shape: number[];
+  /** Closes a cycle (found in layoutSystem): drawn right to left, as a loop under the cards. */
+  back: boolean;
 }
 
 export interface SystemLayout {
@@ -240,23 +244,39 @@ export function layoutSystem(graph: Graph): SystemLayout {
     const from = cardOf.get(edge.source);
     const to = cardOf.get(edge.target);
     if (!from || !to || from === to || links.some((link) => link.from === from && link.to === to)) continue;
-    links.push({ from, to, label: edge.label, shape: edge.tensor_shape });
+    links.push({ from, to, label: edge.label, shape: edge.tensor_shape, back: false });
   }
 
-  // 3. Rank = longest path from a source (Kahn's algorithm). Cards in a cycle keep rank 0.
+  // 3. Break cycles for ranking only: a depth-first search from the cards in the
+  // order they were added marks links back onto the current path as back links.
+  const onPath = new Set<Card>();
+  const visited = new Set<Card>();
+  const visit = (card: Card) => {
+    visited.add(card);
+    onPath.add(card);
+    for (const link of links.filter((candidate) => candidate.from === card)) {
+      if (onPath.has(link.to)) link.back = true;
+      else if (!visited.has(link.to)) visit(link.to);
+    }
+    onPath.delete(card);
+  };
+  for (const card of cards) if (!visited.has(card)) visit(card);
+  const forward = links.filter((link) => !link.back);
+
+  // 4. Rank = longest path from a source (Kahn's algorithm), ignoring back links.
   const incoming = new Map(cards.map((card) => [card, 0]));
-  for (const link of links) incoming.set(link.to, incoming.get(link.to)! + 1);
+  for (const link of forward) incoming.set(link.to, incoming.get(link.to)! + 1);
   const queue = cards.filter((card) => incoming.get(card) === 0);
   while (queue.length > 0) {
     const card = queue.shift()!;
-    for (const link of links.filter((candidate) => candidate.from === card)) {
+    for (const link of forward.filter((candidate) => candidate.from === card)) {
       link.to.rank = Math.max(link.to.rank, card.rank + 1);
       incoming.set(link.to, incoming.get(link.to)! - 1);
       if (incoming.get(link.to) === 0) queue.push(link.to);
     }
   }
 
-  // 4. Order each rank by the average position of its inputs, to reduce crossings.
+  // 5. Order each rank by the average position of its inputs, to reduce crossings.
   const rankCount = Math.max(...cards.map((card) => card.rank)) + 1;
   const ranks: Card[][] = Array.from({ length: rankCount }, () => []);
   for (const card of cards) ranks[card.rank].push(card);
@@ -264,7 +284,7 @@ export function layoutSystem(graph: Graph): SystemLayout {
   ranks.forEach((rank, r) => {
     if (r > 0) {
       const weight = (card: Card) => {
-        const sources = links.filter((link) => link.to === card).map((link) => order.get(link.from) ?? 0);
+        const sources = forward.filter((link) => link.to === card).map((link) => order.get(link.from) ?? 0);
         return sources.length > 0 ? sources.reduce((a, b) => a + b, 0) / sources.length : Infinity;
       };
       rank.sort((a, b) => weight(a) - weight(b));
@@ -272,7 +292,7 @@ export function layoutSystem(graph: Graph): SystemLayout {
     rank.forEach((card, i) => order.set(card, i - (rank.length - 1) / 2));
   });
 
-  // 5. Place ranks left to right, cards in a rank stacked and centred vertically.
+  // 6. Place ranks left to right, cards in a rank stacked and centred vertically.
   let left = 0;
   for (const rank of ranks) {
     const width = Math.max(...rank.map((card) => card.width));
@@ -286,7 +306,7 @@ export function layoutSystem(graph: Graph): SystemLayout {
     left += width + RANK_GAP;
   }
 
-  // 6. Neighbours outside this level aren't drawn, only their links, which run
+  // 7. Neighbours outside this level aren't drawn, only their links, which run
   // off screen: move them well out, and leave them out of the bounds.
   for (const card of cards.filter((candidate) => isOutside(candidate.node))) {
     card.x += card.node.type === "input" ? -OUTSIDE_SHIFT : OUTSIDE_SHIFT;
@@ -302,7 +322,8 @@ export function layoutSystem(graph: Graph): SystemLayout {
       left: Math.min(...framed.map((card) => card.x - card.width / 2)) - room("input"),
       right: Math.max(...framed.map((card) => card.x + card.width / 2)) + room("output"),
       top: Math.max(...framed.map((card) => card.y + card.height / 2)),
-      bottom: Math.min(...framed.map((card) => card.y - card.height / 2)),
+      // Back links loop under the cards.
+      bottom: Math.min(...framed.map((card) => card.y - card.height / 2)) - (forward.length < links.length ? BACK_LINK_DROP : 0),
     },
   };
 }

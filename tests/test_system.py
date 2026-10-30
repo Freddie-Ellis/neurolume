@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from neurolume import System, to_graph
+from neurolume import Component, System, to_graph
 from neurolume.server import demo_graph
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -113,3 +113,47 @@ def test_a_system_inside_a_system_links_to_its_ends() -> None:
     # Links attach to the inner system's ends (its sensor and prediction blocks), not to a network inside it.
     assert any(edge.source == "Source" and edge.target == "pipe/sensor" for edge in graph.edges)
     assert any(edge.source == "pipe/prediction" and edge.target == "Sink" for edge in graph.edges)
+
+
+def _three_input_system() -> tuple[System, list[str]]:
+    torch = pytest.importorskip("torch")
+
+    class TwinQ(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc = torch.nn.Linear(7, 1)
+
+        def forward(self, obs, priv, act):  # type: ignore[no-untyped-def]
+            return self.fc(torch.cat([obs, priv, act], dim=-1))
+
+    system = System()
+    critic = system.add("critic", TwinQ(), (torch.randn(1, 3), torch.randn(1, 2), torch.randn(1, 2)))
+    names = [node.id for node in system.to_graph().nodes if node.type == "input"]
+    for name in ("obs", "priv", "act"):
+        system.connect(system.block(name, output_shape=[62]), critic, to=None if name == "obs" else name)
+    return system, names
+
+
+def test_connect_to_picks_one_of_several_inputs() -> None:
+    system, names = _three_input_system()
+    assert names == ["critic/obs", "critic/priv", "critic/act"]
+    links = {(edge.source, edge.target) for edge in system.to_graph().edges if "/" not in edge.source}
+    # Without `to`, the first input is used, as before.
+    assert links == {("obs", "critic/obs"), ("priv", "critic/priv"), ("act", "critic/act")}
+
+
+def test_connect_to_an_unknown_input_lists_the_names() -> None:
+    system, _ = _three_input_system()
+    source = system.block("extra")
+    with pytest.raises(ValueError, match="obs, priv, act"):
+        system.connect(source, Component("critic", "network"), to="action")
+    with pytest.raises(ValueError, match="block"):
+        system.connect(Component("critic", "network"), source, to="x")
+
+
+def test_connect_shape_overrides_the_link_shape() -> None:
+    system = System()
+    env = system.block("env", output_shape=[62])
+    priv = system.block("priv")
+    system.connect(env, priv, shape=[4])
+    assert system.to_graph().edges[0].tensor_shape == [4]

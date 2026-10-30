@@ -74,6 +74,30 @@ describe("layoutSystem", () => {
   });
 });
 
+describe("layoutSystem with feedback loops", () => {
+  const blocks = (ids: string[], edges: [string, string][]): Graph => ({
+    ...system,
+    nodes: ids.map((id) => node(id, "custom", null, [4])),
+    edges: edges.map(([source, target]) => edge(source, target)),
+    groups: [],
+  });
+  const ranks = (graph: Graph) => layoutSystem(graph).cards.map((c) => c.rank);
+
+  it("breaks a cycle at the link back to the first card, and still draws it", () => {
+    const layout = layoutSystem(blocks(["a", "b", "c"], [["a", "b"], ["b", "c"], ["c", "a"]]));
+    expect(layout.cards.map((c) => c.rank)).toEqual([0, 1, 2]);
+    expect(layout.links.map((l) => [l.from.id, l.to.id, l.back])).toEqual([
+      ["node:a", "node:b", false],
+      ["node:b", "node:c", false],
+      ["node:c", "node:a", true],
+    ]);
+  });
+
+  it("ranks cards downstream of a cycle", () => {
+    expect(ranks(blocks(["a", "b", "d"], [["a", "b"], ["b", "a"], ["b", "d"]]))).toEqual([0, 1, 2]);
+  });
+});
+
 describe("subgraph", () => {
   it("adds input and output columns to a group that has none", () => {
     const decoder = subgraph(system, "dec");
