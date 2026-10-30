@@ -1,7 +1,8 @@
 # frontend — notes for Claude
 
 TypeScript + Vite + three.js (r170). The viewer is driven purely by the graph
-JSON from `/api/graph` (or `window.__NEUROLUME_GRAPH__` for future HTML exports).
+JSON from `/api/graph` (or `window.__NEUROLUME_GRAPH__` in an `export_html()` file;
+`vite build --mode export` in `vite.config.ts` makes that single-bundle build: no lazy chunks, fonts inlined).
 After any change: `npx tsc`, `npx vitest run`, then `scripts/build_frontend.ps1`
 from the repo root. The user refreshes the browser; no Python restart needed.
 
@@ -9,7 +10,7 @@ from the repo root. The user refreshes the browser; no Python restart needed.
 
 | File | What it does |
 | --- | --- |
-| `main.ts` | Entry. `View` (system overview or one network; `origin` = the group it shows, `cardBounds()` for overviews), `childView()`, `Stage` (shows a view, rebuilds on theme change, back/fit, zoom-in/zoom-out navigation, `openPath()`), title card, depth tree (bottom left: the whole model, any level clickable), controls (Overview when nested, Settings panel with theme, edge colourmap, Detail sliders (`LIMIT_CONTROLS`) and the `CONTROLS` reference), keyboard (f, t, Esc) |
+| `main.ts` | Entry. `View` (system overview or one network; `origin` = the group it shows, `cardBounds()` for overviews), `childView()`, `Stage` (shows a view, rebuilds on theme change, back/fit, zoom-in/zoom-out navigation, `openPath()`), title card, depth tree (bottom left: the whole model, any level clickable), controls (Overview when nested, Settings panel with theme, edge colourmap, Detail sliders (`LIMIT_CONTROLS`), an Export button (downloads `/api/export`; hidden inside an exported file) and the `CONTROLS` reference), keyboard (f, t, Esc) |
 | `schema.ts` | **Generated** from pydantic — never edit by hand |
 | `limits.ts` | `limits`: the drawing caps (neurons per column, edges per dense layer in `linkSegments` — capped by what Python sends, `weight_k` —, maps per stack, map edges, map→dense edges, strands per link) the user sets in Settings → Detail, saved in localStorage; layout/render code reads them at build time, and views re-lay out on every build (`networkView`/`systemView`), so a change applies on rebuild |
 | `theme.ts` | `themes` (dark/light), `colormaps` (5 per theme), localStorage helpers, `withColormap()` |
@@ -132,6 +133,7 @@ render-on-demand via `requestRender`, `fitTo`/`fitTarget`, `screenRect` /
 - Overviews nest: opening a card whose network has parts gives another `systemView` (parent = the overview it came from), any depth; Esc/Overview go up one level.
 - Navigation: click or zoom into a network card (fills `ZOOM_IN_FILL`) opens it; zooming below `ZOOM_OUT_TO_PARENT` × fit zoom, Esc, or Overview goes back. After going *in*, scroll zoom is ignored for `ZOOM_PAUSE_MS`, then eases back in over `ZOOM_EASE_IN_MS` even if the scroll continues (`pauseZoom`). A "wait until the scroll gesture ends" version was tried and rejected: it never released while the user kept scrolling.
 
+- **HUD chrome** (Oct 2026 pass, notes in `docs/ui-notes.md`): the title (44px display type over a mono readout line) and the Levels tree are frameless type on the canvas with the label shadow, not boxes; boxes are kept for things you work in (Settings, inspector, tooltip). Colourmaps are a row of five swatches, the chosen one named in the heading; the Controls reference is a folded `<details>`, so Settings fits without scrolling. Panels enter with one-shot expo-out keyframes (`--ease-out`, 120–300ms), all off under `prefers-reduced-motion`; nothing loops. A "Loading graph…" line shows until the graph arrives.
 - No Fit button and no hint line at the bottom: the user moved theme,
   colourmap and the controls reference into the Settings panel. Fit is still
   `f` / double-click empty space.
@@ -141,6 +143,13 @@ render-on-demand via `requestRender`, `fitTo`/`fitTarget`, `screenRect` /
   `PANEL_RADIUS`/`CARD_RADIUS` = 2); solid surfaces with hairline borders, no
   backdrop blur, no soft shadows; neutral ink accent, so the edge colourmap is
   the only colour. Avoid reintroducing pills, big radii, glass or purple accents.
+  Instrument frame (pure CSS, no JS, no per-frame cost): `#app::before` draws the edge
+  rulers and corner brackets (token `--tick`; no grid, it showed through the panels); titles are ruled blocks, Settings/inspector sections are numbered
+  with CSS counters (`section > h3::before`, so never notes headings), the active
+  segmented option and an open Settings button are inverted, sliders are a hairline
+  track with a square thumb, shortcuts are keycaps. Scene neutrals in `theme.ts`
+  (background, panel fill/border) were only made blacker/crisper; edge opacity,
+  dimming and bloom were left as tuned.
 
 ## Gotchas
 

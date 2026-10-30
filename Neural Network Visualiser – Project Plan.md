@@ -225,13 +225,15 @@ _Status (29 Oct 2026):_ passes. `examples/cnn.py` (PyTorch) and `examples/keras_
 
 _Status (29 Oct 2026):_ passes. `examples/resnet.py` opens as Input → stem → layer1–4 → head → Output; each stage opens to its two blocks and each block to its layers, with the skip connection (and layer2–4's downsample path) drawn as arcs (checked by screenshot; group tree asserted in `tests/test_torch_adapter.py`). Keras nested models (`examples/keras_resnet.py`) behave the same, feature maps included. Known gaps: a Keras block built with `keras.Input((None, None, C))` has unknown sizes; flat Keras applications (e.g. `keras.applications.ResNet50`) are not grouped, since their blocks are only name prefixes.
 
-### Phase 4 – Export
+### Phase 4 – Export ✅
 
 **Revised:** the teaching features (presentation mode, a forward-pass animation, an "explain this layer" panel) and PNG export were dropped. The viewer as it is already works for presenting, so this phase is only about getting it out of Python.
 
-- [ ] `export_html()`: one standalone file (the frontend already reads `window.__NEUROLUME_GRAPH__` for this).
+- [x] `export_html()`: one standalone file (the frontend already reads `window.__NEUROLUME_GRAPH__` for this).
 
-**Done when:** the exported HTML works offline from a USB stick.
+**Done when:** the exported HTML opens from disk with no Python or network.
+
+_Status (30 Oct 2026):_ passes. `vite build --mode export` makes one JS bundle (KaTeX folded in) and one CSS file with fonts as data URIs; `export.py` inlines both plus the graph. A network and a System export were opened from `file://` in headless Edge and render fully. Files are about 3 MB, mostly fonts.
 
 ### Phase 5 – Live training and Qt integration
 

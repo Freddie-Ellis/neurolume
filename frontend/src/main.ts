@@ -307,6 +307,8 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
   const settingsButton = controls.querySelector<HTMLButtonElement>('[data-action="settings"]')!;
   const panel = controls.querySelector<HTMLElement>(".settings-panel")!;
 
+  // The controls reference starts folded, so Settings fits on a laptop screen; it stays as you left it.
+  let controlsOpen = false;
   const render = () => {
     const option = (selected: boolean, data: string, content: string) =>
       `<button role="radio" ${data} aria-checked="${selected}">${content}</button>`;
@@ -319,14 +321,14 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
         </div>
       </section>
       <section>
-        <h3>Edge colours</h3>
+        <h3>Edge colours <span class="h3-value">${escapeHtml(colormap.name)}</span></h3>
         <div class="colormap-list" role="radiogroup" aria-label="Edge colours">
           ${colormaps[base.name]
             .map((candidate) =>
               option(
                 candidate.name === colormap.name,
-                `data-colormap="${escapeHtml(candidate.name)}"`,
-                `<span class="swatch" style="background: ${colormapCss(candidate)}"></span>${escapeHtml(candidate.name)}`,
+                `data-colormap="${escapeHtml(candidate.name)}" title="${escapeHtml(candidate.name)}" aria-label="${escapeHtml(candidate.name)}"`,
+                `<span class="swatch" style="background: ${colormapCss(candidate)}"></span>`,
               ),
             )
             .join("")}
@@ -341,13 +343,26 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
               <input type="range" data-limit="${name}" min="${min}" max="${max}" step="${step}" value="${limits[name]}">
             </label>`,
           ).join("")}
-          <button data-action="reset-limits">Reset to defaults</button>
+          <button class="outlined" data-action="reset-limits">Reset to defaults</button>
         </div>
       </section>
+      ${
+        window.__NEUROLUME_GRAPH__
+          ? "" // already a standalone file: nothing to export from
+          : `<section>
+        <h3>Export</h3>
+        <button class="outlined" data-action="export">Download standalone HTML</button>
+      </section>`
+      }
       <section>
-        <h3>Controls</h3>
-        <dl class="shortcuts">${CONTROLS.map(([action, input]) => `<dt>${action}</dt><dd>${input}</dd>`).join("")}</dl>
+        <details class="controls-ref"${controlsOpen ? " open" : ""}>
+          <summary><h3>Controls</h3></summary>
+          <dl class="shortcuts">${CONTROLS.map(([action, input]) => `<dt>${action}</dt><dd>${input}</dd>`).join("")}</dl>
+        </details>
       </section>`;
+    panel.querySelector("details")!.addEventListener("toggle", (event) => {
+      controlsOpen = (event.target as HTMLDetailsElement).open;
+    });
   };
   const setOpen = (open: boolean) => {
     panel.hidden = !open;
@@ -367,6 +382,8 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
   panel.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("button");
     if (target?.dataset.themeName === "dark" || target?.dataset.themeName === "light") setTheme(target.dataset.themeName);
+    // The server sends it as an attachment, so this downloads it without leaving the page.
+    if (target?.dataset.action === "export") window.location.href = "/api/export";
     if (target?.dataset.action === "reset-limits") {
       setLimit();
       stage.setTheme(withColormap(base, colormap)); // rebuilds the view with the new limits
@@ -412,7 +429,12 @@ async function main(): Promise<void> {
   const app = document.querySelector<HTMLElement>("#app");
   if (!app) throw new Error("Neurolume mount element was not found");
 
+  const loading = document.createElement("p");
+  loading.className = "loading";
+  loading.textContent = "Loading graph…";
+  app.append(loading);
   const graph = await loadGraph();
+  loading.remove();
   if (graph.schema_version.split(".")[0] !== SCHEMA_VERSION.split(".")[0]) {
     console.warn(`Graph uses schema ${graph.schema_version}; this viewer expects ${SCHEMA_VERSION}`);
   }
@@ -427,10 +449,10 @@ async function main(): Promise<void> {
   app.append(tooltip);
 
   const titleCard = document.createElement("header");
-  titleCard.className = "title-card surface";
+  titleCard.className = "title-card";
 
   const depthTree = document.createElement("nav");
-  depthTree.className = "depth-tree surface";
+  depthTree.className = "depth-tree";
   depthTree.setAttribute("aria-label", "Levels");
   depthTree.hidden = true;
 

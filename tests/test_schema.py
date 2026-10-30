@@ -81,3 +81,7 @@ def test_generated_typescript_schema_is_up_to_date() -> None:
     spec.loader.exec_module(module)
     committed = (ROOT / "frontend" / "src" / "schema.ts").read_text(encoding="utf-8")
     assert committed == module.generate(), "run: python scripts/generate_schema_ts.py"
+
+
+def test_export_endpoint_serves_the_standalone_page() -> None:
+    assert "window.__NEUROLUME_GRAPH__" in _get("/api/export")

@@ -59,6 +59,16 @@ python -m pip install -e ".[torch]"
 python -m pip install -e ".[tensorflow]"
 ```
 
+## Exporting a standalone file
+
+```python
+neurolume.export_html(model, (1, 28, 28), "model.html")
+```
+
+Writes the viewer and the graph into one HTML file (about 3 MB) that opens
+from disk, offline, with no Python running. It takes the same `sample` and
+options as `show`, and also accepts a `System`.
+
 ## Systems of networks
 
 Larger models are often several networks wired together. Link them, plus any

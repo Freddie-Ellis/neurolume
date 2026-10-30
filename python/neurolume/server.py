@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import socket
 import sys
 import threading
@@ -13,6 +14,7 @@ from typing import Any
 import tornado.web
 
 from .adapters import to_graph
+from .export import standalone_page
 from .schema import Graph
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -73,6 +75,16 @@ class _GraphHandler(tornado.web.RequestHandler):
         self.write(self.graph.model_dump_json())
 
 
+class _ExportHandler(_GraphHandler):
+    """The standalone HTML file, as a download (the viewer's Settings > Export button)."""
+
+    def get(self) -> None:
+        name = re.sub(r"[^\w.-]+", "_", self.graph.model.name).strip("_") or "model"
+        self.set_header("Content-Type", "text/html; charset=utf-8")
+        self.set_header("Content-Disposition", f'attachment; filename="{name}.html"')
+        self.write(standalone_page(self.graph))
+
+
 class _IndexHandler(tornado.web.RequestHandler):
     def get(self) -> None:
         index_file = _STATIC_DIR / "index.html"
@@ -80,11 +92,13 @@ class _IndexHandler(tornado.web.RequestHandler):
 
 
 def create_app(graph: Graph | None = None) -> tornado.web.Application:
-    """The viewer application: the page, its assets and the graph at /api/graph."""
+    """The viewer application: the page, its assets, the graph at /api/graph and the standalone file at /api/export."""
+    graph = graph or demo_graph()
     return tornado.web.Application(
         [
             (r"/", _IndexHandler),
-            (r"/api/graph", _GraphHandler, {"graph": graph or demo_graph()}),
+            (r"/api/graph", _GraphHandler, {"graph": graph}),
+            (r"/api/export", _ExportHandler, {"graph": graph}),
             (r"/assets/(.*)", tornado.web.StaticFileHandler, {"path": str(_STATIC_DIR / "assets")}),
         ],
         log_function=lambda handler: None,  # no request log in the user's terminal

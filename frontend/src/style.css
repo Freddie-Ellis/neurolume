@@ -10,29 +10,32 @@
 :root[data-theme="dark"] {
   --text-1: #fafafa;
   --text-2: #d4d4d8;
-  --text-3: #a1a1aa;
+  --text-3: #a8a8b0;
   --accent: #fafafa;
   --accent-soft: rgba(255, 255, 255, 0.1);
   --hover: rgba(255, 255, 255, 0.06);
   --inset: rgba(255, 255, 255, 0.04);
-  --surface: #0f0f13;
-  --surface-border: rgba(255, 255, 255, 0.16);
+  --surface: #09090b;
+  --surface-border: rgba(255, 255, 255, 0.26);
   --label-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-  --page: #050507;
+  --page: #000000;
+  /* Instrument frame: corner marks. Deliberately faint. */
+  --tick: rgba(255, 255, 255, 0.34);
 }
 
 :root[data-theme="light"] {
   --text-1: #09090b;
   --text-2: #3f3f46;
-  --text-3: #71717a;
+  --text-3: #52525b;
   --accent: #09090b;
   --accent-soft: rgba(0, 0, 0, 0.07);
   --hover: rgba(0, 0, 0, 0.04);
   --inset: rgba(0, 0, 0, 0.03);
   --surface: #ffffff;
-  --surface-border: rgba(0, 0, 0, 0.2);
+  --surface-border: rgba(0, 0, 0, 0.34);
   --label-shadow: 0 0 3px rgba(255, 255, 255, 0.9);
-  --page: #ececee;
+  --page: #ebebe7;
+  --tick: rgba(0, 0, 0, 0.42);
 }
 
 :root {
@@ -57,6 +60,28 @@ body {
   position: relative;
   width: 100vw;
   height: 100vh;
+}
+
+/*
+ * Instrument frame, drawn over the scene and under every card: corner brackets.
+ * Static CSS, so it costs nothing per frame, and pointer-events: none keeps pan
+ * and zoom intact. (Tick rulers along the top and left were removed at the user's request.)
+ */
+#app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  --arm: 10px;
+  background:
+    /* corner brackets, bottom and right */
+    linear-gradient(var(--tick), var(--tick)) right 6px bottom 6px / var(--arm) 1px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right 6px bottom 6px / 1px var(--arm) no-repeat,
+    linear-gradient(var(--tick), var(--tick)) left 6px bottom 6px / var(--arm) 1px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) left 6px bottom 6px / 1px var(--arm) no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right 6px top 6px / var(--arm) 1px no-repeat,
+    linear-gradient(var(--tick), var(--tick)) right 6px top 6px / 1px var(--arm) no-repeat;
 }
 
 #app > canvas {
@@ -216,10 +241,12 @@ h3 {
 
 /* ---- Depth tree (bottom left): every level down to the current one ---- */
 
+/* Like the title, HUD type on the canvas rather than a box; a hairline on the left holds it together. */
 .depth-tree {
   position: absolute;
-  bottom: 16px;
-  left: 16px;
+  bottom: 24px;
+  left: 28px;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -227,7 +254,9 @@ h3 {
   max-width: 280px;
   max-height: 45vh;
   overflow-y: auto;
-  padding: 10px 12px 10px 4px;
+  padding: 2px 12px 2px 0;
+  border-left: 1px solid var(--surface-border);
+  text-shadow: var(--label-shadow);
 }
 
 .depth-tree[hidden] {
@@ -235,7 +264,7 @@ h3 {
 }
 
 .depth-tree .eyebrow {
-  margin: 0 0 4px 8px;
+  margin: 0 0 6px 10px;
 }
 
 .depth-row {
@@ -263,10 +292,12 @@ button.depth-row:hover {
   color: var(--text-1);
 }
 
+/* Marks where you are: a bar over the tree's hairline. */
 .depth-row[aria-current="true"] {
+  margin-left: -1px;
   color: var(--text-1);
   font-weight: 600;
-  box-shadow: inset 2px 0 0 var(--text-1); /* marks where you are */
+  box-shadow: inset 2px 0 0 var(--text-1);
 }
 
 /* The levels above the current one, so the path down to it stands out. */
@@ -287,33 +318,52 @@ button.depth-row:hover {
 
 /* ---- Title card ---- */
 
+/*
+ * The title is HUD type on the canvas, not a box: the page's one display
+ * moment (big, tight tracking) over a mono readout line. Fit insets keep the
+ * scene clear of it; the label shadow keeps it legible if you pan under it.
+ */
 .title-card {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  top: 24px;
+  left: 28px;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 16px 24px 16px 16px;
+  gap: 6px;
+  max-width: min(640px, 50vw);
+  pointer-events: none;
+  text-shadow: var(--label-shadow);
 }
 
 .title-card h1 {
-  font-size: 20px;
+  font-size: 44px;
   font-weight: 600;
-  line-height: 1.25;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  text-wrap: balance;
 }
 
 .title-meta {
   display: flex;
-  gap: 16px;
+  gap: 20px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--surface-border);
   color: var(--text-3);
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
+/* The figure sits before its unit, like a readout. */
 .title-meta strong {
-  color: var(--text-2);
-  font-family: var(--mono);
+  margin-right: 6px;
+  color: var(--text-1);
+  font-size: 13px;
   font-weight: 500;
+  letter-spacing: 0;
 }
 
 /* ---- Controls ---- */
@@ -338,9 +388,11 @@ button.depth-row:hover {
   border-radius: 0;
   background: transparent;
   color: var(--text-2);
-  font: inherit;
-  font-size: 13px;
+  font-family: var(--mono);
+  font-size: 11px;
   font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   cursor: pointer;
   transition: background 120ms, color 120ms;
 }
@@ -353,6 +405,12 @@ button.depth-row:hover {
 .controls button[aria-pressed="true"] {
   background: var(--accent-soft);
   color: var(--text-1);
+}
+
+/* Settings open: inverted, so the active control is the highest-contrast thing on screen. */
+.controls button[aria-expanded="true"] {
+  background: var(--text-1);
+  color: var(--surface);
 }
 
 .controls button:focus-visible,
@@ -415,11 +473,16 @@ button.depth-row:hover {
   gap: 16px;
 }
 
+.inspector {
+  counter-reset: section;
+}
+
 .inspector h2 {
   margin-top: 4px;
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
-  line-height: 1.25;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
 }
 
 .subtitle {
@@ -463,14 +526,18 @@ button.depth-row:hover {
 
 .stat-value {
   font-family: var(--mono);
-  font-size: 20px;
+  font-size: 26px;
   font-weight: 500;
-  line-height: 1.2;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 
 .stat-label {
   color: var(--text-3);
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .inspector section + section {
@@ -524,9 +591,80 @@ button.depth-row:hover {
   white-space: pre-wrap;
 }
 
+/*
+ * Entrances: short, one-shot and expo-out, so panels arrive rather than pop.
+ * Nothing loops, and nothing waits on them: input works from the first frame.
+ */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes enter-left {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.settings-panel {
+  animation: enter-down 180ms var(--ease-out);
+}
+
+.inspector {
+  animation: enter-left 220ms var(--ease-out);
+}
+
+.tooltip {
+  animation: fade-in 120ms var(--ease-out);
+}
+
+.title-card,
+.depth-tree {
+  animation: fade-in 300ms var(--ease-out);
+}
+
+/* Shown while the graph loads, before the first view is built. */
+.loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+::selection {
+  background: var(--text-1);
+  color: var(--surface);
+}
+
+/* Thin scrollbars in the panel colours, not the browser's grey slab. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-border) transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  *,
   .controls button {
-    transition: none;
+    animation: none !important;
+    transition: none !important;
   }
 }
 
@@ -613,16 +751,26 @@ button.depth-row:hover {
   right: -1px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  width: 288px;
+  width: 296px;
   max-height: calc(100vh - 80px);
   overflow-y: auto;
-  padding: 16px;
+  padding: 0 16px 16px;
   box-sizing: border-box;
+  counter-reset: section;
 }
 
 .settings-panel[hidden] {
   display: none;
+}
+
+/* Sections are ruled and numbered, like a spec sheet. */
+.settings-panel section {
+  padding-top: 16px;
+}
+
+.settings-panel section + section {
+  margin-top: 16px;
+  border-top: 1px solid var(--surface-border);
 }
 
 .settings-panel h3 {
@@ -631,8 +779,18 @@ button.depth-row:hover {
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/* Only a section's own heading is numbered, never headings inside rendered notes. */
+.settings-panel section > h3::before,
+.settings-panel summary > h3::before,
+.inspector section > h3::before {
+  counter-increment: section;
+  content: counter(section, decimal-leading-zero) "  ";
+  margin-right: 4px;
+  color: var(--text-1);
 }
 
 .settings-panel button {
@@ -675,10 +833,20 @@ button.depth-row:hover {
 .segmented button {
   justify-content: center;
   padding: 6px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .segmented button + button {
   border-left: 1px solid var(--surface-border);
+}
+
+/* The chosen half is inverted: unmistakable at a glance, and it never relies on colour. */
+.segmented button[aria-checked="true"] {
+  background: var(--text-1);
+  color: var(--surface);
 }
 
 /* Detail sliders: label and value on one line, the slider under them. */
@@ -702,41 +870,138 @@ button.depth-row:hover {
   font-size: 12px;
 }
 
+/* A hairline track with a square thumb, instead of the browser's rounded slider. */
 .limits input {
   grid-column: 1 / -1;
   width: 100%;
+  height: 16px;
   margin: 0;
-  accent-color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
-.limits button {
+.limits input::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--text-3);
+}
+
+.limits input::-webkit-slider-thumb {
+  width: 8px;
+  height: 16px;
+  margin-top: -8px;
+  border: 0;
+  border-radius: 0;
+  background: var(--text-1);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.limits input::-moz-range-track {
+  height: 1px;
+  background: var(--text-3);
+}
+
+.limits input::-moz-range-thumb {
+  width: 8px;
+  height: 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--text-1);
+}
+
+.limits input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-panel .outlined {
+  width: 100%;
   justify-content: center;
   padding: 6px 12px;
   border: 1px solid var(--surface-border);
   border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
+.settings-panel .outlined:hover {
+  border-color: var(--text-1);
+}
+
+/* Five swatches in a row; the chosen one is outlined and named in the heading. */
 .colormap-list {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--surface-border);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.settings-panel .colormap-list button {
+  padding: 3px;
+  border: 1px solid transparent;
   border-radius: var(--radius);
 }
 
-.colormap-list button {
-  padding: 8px 12px;
+.settings-panel .colormap-list button:hover {
+  border-color: var(--surface-border);
+  background: transparent;
 }
 
-.colormap-list button + button {
-  border-top: 1px solid var(--surface-border);
+.settings-panel .colormap-list button[aria-checked="true"] {
+  border-color: var(--text-1);
+  background: transparent;
 }
 
 .swatch {
-  display: inline-block;
-  width: 28px;
-  height: 10px;
-  border-radius: var(--radius);
-  box-shadow: inset 0 0 0 1px var(--surface-border);
+  display: block;
+  width: 100%;
+  height: 18px;
+  border-radius: 1px;
+}
+
+.h3-value {
+  float: right;
+  color: var(--text-1);
+}
+
+/* The controls reference folds under its heading; a mono +/- marks the toggle. */
+.controls-ref summary {
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+
+.controls-ref summary::-webkit-details-marker {
+  display: none;
+}
+
+.controls-ref summary::after {
+  content: "+";
+  color: var(--text-1);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.controls-ref[open] summary::after {
+  content: "−";
+}
+
+.controls-ref:not([open]) h3 {
+  margin-bottom: 0;
+}
+
+.controls-ref summary:hover h3 {
+  color: var(--text-1);
+}
+
+.controls-ref summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .shortcuts {
@@ -758,12 +1023,25 @@ button.depth-row:hover {
   color: var(--text-2);
 }
 
+/* Inputs read as keycaps. */
 .shortcuts dd {
+  align-self: center;
+  justify-self: end;
+  padding: 1px 6px;
+  border: 1px solid var(--surface-border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius);
   color: var(--text-1);
   font-family: var(--mono);
-  font-size: 11px;
-  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   white-space: nowrap;
+}
+
+.shortcuts dt {
+  align-self: center;
+  border-top: 0;
 }
 
 /* ---- Notes in the inspector (rendered Markdown) ---- */

@@ -9,9 +9,10 @@
 | `adapters/base.py` | `to_graph()` dispatch (Graph → as-is, System → `.to_graph()`, torch → adapter), `fold_activations()` |
 | `adapters/torch_adapter.py` | `from_torch()`: needs a `forward` (clear `TypeError` without one); torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, LayerNorm (both `norm`), Dropout, Flatten, `+`/`torch.add` → `add`, `torch.cat` → `concat`; nested groups from the module tree |
 | `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling, and after a Flatten of channels-last maps their rows are reordered to channels-first (`_rows_channels_first`), so weight indices mean the same map cell in both frameworks |
-| `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
+| `weights.py` | `sample_dense()`: top-k / random edge sampling (`DEFAULT_K` 20000 = the viewer's max "Edges per dense layer"); pairs are `[in_index, out_index, value]` |
 | `feature_maps.py` | `feature_maps()`: a `[C, H, W]` array → `FeatureMaps` (12 most active channels first, ≤32×32, 0-255 per channel, base64) |
 | `system.py` | `System` builder: `add(name, model, x)`, `block(name, ..., description=, notes=)`, `connect(a, b, label=, to=, from_=, shape=)` (`to`/`from_` pick an input/output by node id, e.g. a `forward` argument; `shape` overrides the link's tensor shape) |
+| `export.py` | `export_html(model, sample, path, **options)` → `standalone_page(graph)`: inlines `static/export/` (`viewer.js`, `viewer.css`, built by `vite build --mode export`) and the graph JSON (`window.__NEUROLUME_GRAPH__`, `</` escaped) into one offline HTML file |
 | `server.py` | Tornado app (like SnakeViz: one dependency, WebSockets built in for Phase 5), `show()` (server on a background thread with its own event loop, free port), `demo_graph()` fallback |
 | `demo.py` | `demo_model()` / `demo_input()` (torch imported inside), `sample_digit()`: a drawn "7" (numpy) for CNN examples |
 
@@ -33,7 +34,7 @@ order) · shape/param helpers.
 
 **`adapters/base.py`**: `to_graph()` (framework detection, Keras first),
 `fold_activations()`. **`system.py`**: `System.add/block/connect/to_graph`.
-**`server.py`**: `create_app` (Tornado: `/`, `/api/graph`, `/assets/`; request log off), `show` / `show_demo`, `Viewer` (thread + event loop; `stop()`)
+**`server.py`**: `create_app` (Tornado: `/`, `/api/graph`, `/api/export` (the standalone file as a download, via `standalone_page()`), `/assets/`; request log off), `show` / `show_demo`, `Viewer` (thread + event loop; `stop()`)
 (handle returned in notebooks), `demo_graph` (fallback without torch).
 
 ## Graph conventions
