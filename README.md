@@ -31,6 +31,12 @@ need one; Keras models that start with `keras.Input` don't. It can be:
 - **real data**, such as a batch of images. This also paints each convolution's
   feature maps with what it outputs for that input.
 
+Neurolume works out the order of the layers, and how they connect, by running
+`sample` through the model's `forward`. So a PyTorch model needs a `forward`
+method (or must be an `nn.Sequential`). A module that only holds layers as
+attributes, with no `forward`, can't be traced; the order you assign
+attributes in `__init__` isn't used.
+
 `show()` starts a local server on a free port and opens the viewer. It blocks
 until Ctrl+C when run as a script, and returns a `Viewer` immediately in a REPL
 or notebook (call `viewer.stop()` to shut it down). `neurolume.to_graph(model,

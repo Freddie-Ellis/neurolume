@@ -5,9 +5,8 @@
  * like the classic LeNet diagrams. Plain maths with no three.js.
  */
 import type { FeatureMaps } from "../schema";
+import { limits } from "../limits";
 
-/** Most slabs drawn per stack; the panel header gives the real channel count. */
-export const MAX_MAPS_SHOWN = 12;
 /**
  * Slab size for the network's largest feature map, which nearly fills a panel.
  * Smaller maps scale with the square root of their size, so a 5 x 5 map next
@@ -53,7 +52,7 @@ export function isMapShape(shape: number[]): boolean {
  */
 export function mapStack(shape: number[], x: number, largest = Math.max(shape[1], shape[2])): MapStack {
   const [channels, mapHeight, mapWidth] = shape;
-  const shown = Math.max(1, Math.min(channels, MAX_MAPS_SHOWN));
+  const shown = Math.max(1, Math.min(channels, limits.maps));
   const side = (size: number) => clamp(MAX_MAP_SIZE * Math.sqrt(size / Math.max(largest, 1)), MIN_MAP_SIZE, MAX_MAP_SIZE);
   const width = side(mapWidth);
   const height = side(mapHeight);
@@ -136,11 +135,6 @@ export function sweepOf(params: Record<string, unknown>, from?: MapStack, to?: M
   return { kernel, stride, padding: pad };
 }
 
-/**
- * Most lines drawn between two stacks, like the cap on dense edges: enough to
- * show how each layer reads its input without hiding the maps under them.
- */
-export const MAX_MAP_EDGES = 480;
 /** Input cells drawn per kernel dimension; a 5 x 5 window shows its corners, edge midpoints and centre. */
 const WINDOW_SAMPLES = 3;
 
@@ -153,12 +147,12 @@ const WINDOW_SAMPLES = 3;
  * going into the stack. Overlapping
  * 5 x 5 convolution windows fan out widely while pooling's 2 x 2 windows stay
  * apart. Big maps only connect every n-th output cell, keeping the total
- * under MAX_MAP_EDGES.
+ * under limits.mapEdges.
  */
 export function cellLinks(from: MapStack, to: MapStack, sweep: Sweep): [Point3, Point3][] {
   const rows = windowSamples(sweep.kernel[0]);
   const columns = windowSamples(sweep.kernel[1]);
-  const cellsWanted = Math.max(1, Math.floor(MAX_MAP_EDGES / (rows.length * columns.length)));
+  const cellsWanted = Math.max(1, Math.floor(limits.mapEdges / (rows.length * columns.length)));
   const every = Math.max(1, Math.ceil(Math.sqrt((to.mapHeight * to.mapWidth) / cellsWanted)));
   // Centre the drawn cells, so a big map's sample doesn't hug its top-left corner.
   const firstRow = Math.floor(((to.mapHeight - 1) % every) / 2);

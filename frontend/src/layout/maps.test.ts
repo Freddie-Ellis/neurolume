@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { limits } from "../limits";
 import type { Graph, GraphNode } from "../schema";
 import { layoutGraph } from "./columns";
 import {
-  MAX_MAP_EDGES,
-  MAX_MAPS_SHOWN,
   MAX_MAP_SIZE,
   MIN_MAP_SIZE,
   cellCentre,
@@ -27,7 +26,7 @@ describe("mapStack", () => {
     const back = stack.slabs[0];
     expect((front.left + back.left + back.width) / 2).toBeCloseTo(100);
     expect(back.left).toBeGreaterThan(front.left); // back slabs sit up and to the right
-    expect(mapStack([64, 8, 8], 0).slabs).toHaveLength(MAX_MAPS_SHOWN);
+    expect(mapStack([64, 8, 8], 0).slabs).toHaveLength(limits.maps);
   });
 
   it("sizes slabs against the network's largest map, by square root, within limits", () => {
@@ -88,7 +87,7 @@ describe("cellLinks", () => {
   it("keeps big maps under the cap", () => {
     const big = mapStack([4, 112, 112], 0, 112);
     const bigger = mapStack([4, 112, 112], 300, 112);
-    expect(cellLinks(big, bigger, sweepOf({ kernel_size: [3, 3] })).length).toBeLessThanOrEqual(MAX_MAP_EDGES);
+    expect(cellLinks(big, bigger, sweepOf({ kernel_size: [3, 3] })).length).toBeLessThanOrEqual(limits.mapEdges);
   });
 });
 

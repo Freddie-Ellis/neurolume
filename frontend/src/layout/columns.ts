@@ -18,9 +18,9 @@
  * maths with no three.js, so it is easy to unit test.
  */
 import type { Graph, GraphNode, NodeType, WeightSample } from "../schema";
+import { limits } from "../limits";
 import { type MapStack, frontSlab, isMapShape, mapPorts, mapStack, stackExtent } from "./maps";
 
-export const MAX_NEURONS_SHOWN = 64;
 /** Tightest spacing between neurons, used by big layers. */
 export const NEURON_SPACING = 12;
 /** Widest spacing, so a 4-unit layer spreads out but still reads as one column. */
@@ -166,7 +166,7 @@ export function unitCount(node: GraphNode): number {
 /** y positions of the drawn neurons, centred on 0, with a gap when truncated. */
 export function neuronSlots(
   units: number,
-  maxShown = MAX_NEURONS_SHOWN,
+  maxShown = limits.neurons,
   spacing = NEURON_SPACING,
 ): { slots: number[]; ellipsisY: number | null } {
   if (units <= maxShown) {
@@ -185,7 +185,7 @@ export function neuronSlots(
 
 /** Number of neuron spacings a column spans from its top neuron to its bottom one. */
 function spacingSteps(units: number): number {
-  return units > MAX_NEURONS_SHOWN ? MAX_NEURONS_SHOWN - 1 + ELLIPSIS_GAP : Math.max(units - 1, 1);
+  return units > limits.neurons ? limits.neurons - 1 + ELLIPSIS_GAP : Math.max(units - 1, 1);
 }
 
 /** Which drawn neuron stands for unit `index` of a layer with `units` units. */
@@ -292,7 +292,7 @@ export function layoutGraph(graph: Graph): Layout {
     const { middle, extent } = part(i);
     const fill = (extent * 2 * 0.85) / spacingSteps(column.units);
     const spacing = Math.min(MAX_NEURON_SPACING, Math.max(NEURON_SPACING, fill));
-    const { slots, ellipsisY } = neuronSlots(column.units, MAX_NEURONS_SHOWN, spacing);
+    const { slots, ellipsisY } = neuronSlots(column.units, limits.neurons, spacing);
     Object.assign(column, { slots: slots.map((y) => y + middle), ellipsisY: ellipsisY === null ? null : ellipsisY + middle });
   });
   // Spread each run of bands evenly across the clear gap after its column:
@@ -369,6 +369,20 @@ export function layoutGraph(graph: Graph): Layout {
     }
   });
 
+  // Parallel branches feeding a band right after them (two heads into one
+  // output) converge on it directly, rather than by arcs dipping under the panels.
+  const stubs: StubLayout[] = [];
+  columns.forEach((column, i) => {
+    if (!slotOf.some((slot, j) => j !== i && slot === slotOf[i])) return;
+    const next = columns.find((_, j) => slotOf[j] > slotOf[i]);
+    for (const band of between(column.node, next?.node)) {
+      const key = `${column.node.id}>${band.node.id}`;
+      if (!edgeKeys.has(key) || covered.has(key)) continue;
+      covered.add(key);
+      stubs.push({ from: column, to: band, t: tOf(i) });
+    }
+  });
+
   const panelBottom = Math.min(...columns.map((c) => c.panel.bottom), 0);
   const arcs = layoutArcs(graph, order, columns, bands, panelBottom, covered);
 
@@ -376,9 +390,8 @@ export function layoutGraph(graph: Graph): Layout {
   // block's last norm and its add). Its edges converge on the first merge band
   // there, or else on the last band an arc leaves from.
   const arcSources = new Set(arcs.map((arc) => arc.source.id));
-  const stubs: StubLayout[] = [];
   columns.forEach((column, i) => {
-    if (links.some((link) => link.from === column)) return;
+    if (links.some((link) => link.from === column) || stubs.some((stub) => stub.from === column)) return;
     const fed: BandLayout[] = [];
     let previous = column.node;
     for (const band of between(column.node, columns[i + 1]?.node)) {
@@ -463,7 +476,8 @@ export interface LinkSegments {
 /**
  * Work out which neuron pairs to connect. With sampled weights we draw the
  * sampled connections, merged onto the visible neurons and scaled by |weight|;
- * without weights every visible neuron connects to every other one.
+ * without weights every visible neuron connects to every other one. Either way
+ * at most `limits.weights` are kept: the strongest, or every n-th pair.
  */
 export function linkSegments(link: LinkLayout, sample: WeightSample | undefined): LinkSegments {
   const fromShown = link.from.slots.length;
@@ -471,7 +485,8 @@ export function linkSegments(link: LinkLayout, sample: WeightSample | undefined)
 
   if (!sample || sample.pairs.length === 0) {
     const pairs: [number, number][] = [];
-    for (let a = 0; a < fromShown; a += 1) for (let b = 0; b < toShown; b += 1) pairs.push([a, b]);
+    const every = Math.max(1, Math.floor((fromShown * toShown) / limits.weights));
+    for (let k = 0; k < fromShown * toShown; k += every) pairs.push([Math.floor(k / toShown), k % toShown]);
     return { pairs, strength: pairs.map(() => 1) };
   }
 
@@ -484,7 +499,7 @@ export function linkSegments(link: LinkLayout, sample: WeightSample | undefined)
   const maxValue = Math.max(...strongest.values()) || 1;
   const pairs: [number, number][] = [];
   const strength: number[] = [];
-  for (const [key, value] of strongest) {
+  for (const [key, value] of [...strongest].sort((a, b) => b[1] - a[1]).slice(0, limits.weights)) {
     pairs.push([Math.floor(key / toShown), key % toShown]);
     strength.push(0.25 + 0.75 * (value / maxValue));
   }

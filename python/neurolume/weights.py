@@ -14,7 +14,8 @@ import numpy.typing as npt
 
 from .schema import WeightSample
 
-DEFAULT_K = 4000
+# Matches the viewer's largest "Edges per dense layer" setting, which picks how many of these are drawn.
+DEFAULT_K = 20000
 
 SampleMode = Literal["topk", "random"]
 

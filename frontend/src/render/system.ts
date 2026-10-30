@@ -44,6 +44,8 @@ const DENSE_STRANDS = 60;
 /** How far out a back link leaves its card and enters the target, and how far above the frame's bottom it loops. */
 const BACK_LINK_REACH = 220;
 const BACK_LINK_MARGIN = 20;
+/** How much more a back link's strands spread (bow and ripple) than a forward link's, so the long loop isn't a tight ruled band. */
+const BACK_LINK_LOOSEN = 3;
 
 export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: string) => void): Network {
   const root = new THREE.Group();
@@ -528,13 +530,17 @@ function linkCurve(link: CardLink, sx: number, sy: number, ex: number, ey: numbe
     return points;
   }
   // Both handles at height c put the curve's midpoint at 0.125 (sy + ey) + 0.75 c, which is `floor`.
-  const c = (floor - 0.125 * (sy + ey)) / 0.75 + (shape.bend ?? 0);
-  const segments = segmentsFor(Math.hypot(BACK_LINK_REACH, c - sy) + Math.abs(ex - sx - 2 * BACK_LINK_REACH) + Math.hypot(BACK_LINK_REACH, c - ey));
+  // Each strand bows, reaches (from its `handle`) and ripples differently, so the loop reads as a loose bundle.
+  const c = (floor - 0.125 * (sy + ey)) / 0.75 + (shape.bend ?? 0) * BACK_LINK_LOOSEN;
+  const reach = BACK_LINK_REACH * (0.5 + (shape.handle ?? 0.5));
+  const wave = shape.wave;
+  const segments = segmentsFor(Math.hypot(reach, c - sy) + Math.abs(ex - sx - 2 * reach) + Math.hypot(reach, c - ey));
   const points: CurvePoint[] = [];
   for (let i = 0; i <= segments; i += 1) {
     const t = i / segments;
     const [a, b, d, e] = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3];
-    points.push({ x: a * sx + b * (sx + BACK_LINK_REACH) + d * (ex - BACK_LINK_REACH) + e * ex, y: a * sy + (b + d) * c + e * ey, along: t });
+    const ripple = wave ? wave.amplitude * BACK_LINK_LOOSEN * Math.sin(Math.PI * t * wave.cycles + wave.phase) * Math.sin(Math.PI * t) : 0;
+    points.push({ x: a * sx + b * (sx + reach) + d * (ex - reach) + e * ex, y: a * sy + (b + d) * c + e * ey + ripple, along: t });
   }
   return points;
 }

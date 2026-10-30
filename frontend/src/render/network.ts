@@ -305,6 +305,7 @@ function bandIcon(node: GraphNode): string | null {
     const name = (node.activation ?? "").toLowerCase();
     if (name.includes("relu") || name.includes("elu")) return "M1 8 H7 L13 2"; // zero, then the input itself
     if (name.includes("sigmoid") || name.includes("tanh") || name.includes("softmax")) return "M1 8 C6 8 8 2 13 2"; // squashed into a range
+    if (name === "clamp") return "M1 8 H4 L10 2 H13"; // the input itself, cut off at both limits
     return "M1 8 C5 8 9 6 13 2";
   }
   return null;
@@ -345,6 +346,8 @@ function buildStrip(band: BandLayout, theme: Theme): THREE.LineSegments {
  */
 function outLead(layout: Layout, graph: Graph, output: BandLayout, theme: Theme): EdgeBundle[] {
   const through = [output];
+  // Stubs already gather the layers before it on its node (parallel heads): leave from there.
+  if (layout.stubs.some((stub) => stub.to === output)) return [buildLead({ band: output }, "out", theme)];
   for (let i = graph.nodes.indexOf(output.node) - 1; i >= 0; i -= 1) {
     const node = graph.nodes[i];
     const column = layout.columns.find((candidate) => candidate.node === node);

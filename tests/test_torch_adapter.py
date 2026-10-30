@@ -44,6 +44,25 @@ def test_activations_fold_into_the_previous_layer() -> None:
     }
 
 
+def test_clamp_folds_like_an_activation() -> None:
+    class Heads(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.mean = nn.Linear(4, 3)
+            self.log_std = nn.Linear(4, 3)
+
+        def forward(self, x):  # type: ignore[no-untyped-def]
+            return self.mean(x), torch.clip(self.log_std(x).clamp(-5, 2), -5, 2)
+
+    graph = to_graph(Heads(), (4,), weights=None)
+    assert {node.id: node.activation for node in graph.nodes if node.type == "dense"} == {
+        "mean": None,
+        "log_std": "clamp",
+    }
+    # The second clamp has no layer left to fold into, so it stays a node of its own.
+    assert [node.type for node in graph.nodes].count("activation") == 1
+
+
 def test_activations_can_stay_as_separate_nodes() -> None:
     torch.manual_seed(0)
     graph = to_graph(MLP(), torch.randn(1, 1, 28, 28), fold_activations_into_layers=False, weights=None)
@@ -155,6 +174,24 @@ def test_a_shape_is_enough_to_measure_a_model() -> None:
 def test_missing_sample_explains_what_to_pass() -> None:
     with pytest.raises(ValueError, match=r"shape of one input .* \(1, 28, 28\)"):
         to_graph(MLP())
+
+
+def test_layernorm_is_a_norm_layer() -> None:
+    model = nn.Sequential(nn.Linear(8, 16), nn.LayerNorm(16), nn.ReLU(), nn.Linear(16, 1))
+    graph = to_graph(model, (8,), weights=None)
+    norm = next(node for node in graph.nodes if node.type == "norm")
+    assert norm.params == {"normalized_shape": [16], "eps": 1e-5}
+
+
+def test_model_without_forward_says_it_needs_one() -> None:
+    class Layers(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc1 = nn.Linear(4, 3)
+            self.fc2 = nn.Linear(3, 2)
+
+    with pytest.raises(TypeError, match="no forward method"):
+        to_graph(Layers(), (4,))
 
 
 class _Block(nn.Module):

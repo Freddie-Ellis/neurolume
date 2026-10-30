@@ -7,7 +7,7 @@
 | `__init__.py` | Public API: `show`, `show_demo`, `to_graph`, `System`, `Component`, `Graph`, `Viewer`, `SCHEMA_VERSION` |
 | `schema.py` | Pydantic models = the JSON contract. `Graph` validates that edges/groups/weights reference real ids |
 | `adapters/base.py` | `to_graph()` dispatch (Graph → as-is, System → `.to_graph()`, torch → adapter), `fold_activations()` |
-| `adapters/torch_adapter.py` | `from_torch()`: torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, Dropout, Flatten, `+`/`torch.add` → `add`, `torch.cat` → `concat`; nested groups from the module tree |
+| `adapters/torch_adapter.py` | `from_torch()`: needs a `forward` (clear `TypeError` without one); torch.fx trace + `ShapeProp`; fallback walks leaf modules with forward hooks. Linear, Conv1d/2d, pooling, BatchNorm, LayerNorm (both `norm`), Dropout, Flatten, `+`/`torch.add` → `add`, `torch.cat` → `concat`; nested groups from the module tree |
 | `adapters/keras_adapter.py` | `from_keras()`: reads `model.layers` + inbound nodes; converts channels-last shapes to channels-first; Dense kernels are transposed before sampling, and after a Flatten of channels-last maps their rows are reordered to channels-first (`_rows_channels_first`), so weight indices mean the same map cell in both frameworks |
 | `weights.py` | `sample_dense()`: top-k / random edge sampling; pairs are `[in_index, out_index, value]` |
 | `feature_maps.py` | `feature_maps()`: a `[C, H, W]` array → `FeatureMaps` (12 most active channels first, ≤32×32, 0-255 per channel, base64) |
@@ -49,7 +49,9 @@ order) · shape/param helpers.
 - Node ids: fx `call_module` nodes use the qualified module name with `.` → `_`
   (`fc1`, `encoder_0`); a single placeholder is `input`; the fx output node is `output`.
 - Activations are folded into the previous layer's `activation` field by default
-  (`fold_activations_into_layers=False` to keep them).
+  (`fold_activations_into_layers=False` to keep them). `clamp`/`clip` count as
+  activations (`"clamp"`): as a column of its own, with no weights, the viewer
+  would join it to its layer all-to-all, which misreads an element-wise op.
 - `weights` is keyed by dense node id; never ship full matrices.
 - `feature_maps` (schema 1.3) is keyed by node id: the real output of image-like
   layers for the first example of a real-data `sample`. torch records it in

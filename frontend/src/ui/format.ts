@@ -28,6 +28,7 @@ const ACTIVATION_NAMES: Record<string, string> = {
   softplus: "Softplus",
   softmax: "Softmax",
   log_softmax: "LogSoftmax",
+  clamp: "Clamp",
 };
 
 export function formatActivation(activation: string | null): string {

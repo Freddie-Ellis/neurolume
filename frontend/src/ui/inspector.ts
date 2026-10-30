@@ -1,4 +1,5 @@
 /** The panel on the right that shows everything known about one layer. */
+import { limits } from "../limits";
 import { escapeHtml, titleFor } from "../render/network";
 import type { Graph, GraphNode } from "../schema";
 import { formatActivation, formatCount, formatShape } from "./format";
@@ -94,7 +95,8 @@ export class Inspector {
     const outFeatures = node.params["out_features"];
     if (!sample || typeof inFeatures !== "number" || typeof outFeatures !== "number") return "";
     const strategy = sample.mode === "topk" ? "strongest" : "randomly sampled";
-    return `<p class="note">Edges show the ${formatCount(sample.k)} ${strategy} of ${formatCount(inFeatures * outFeatures)} connections.</p>`;
+    const drawn = Math.min(sample.k, limits.weights);
+    return `<p class="note">Edges show up to ${formatCount(drawn)} of the ${strategy} of ${formatCount(inFeatures * outFeatures)} connections (Settings › Detail).</p>`;
   }
 }
 

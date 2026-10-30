@@ -1,4 +1,5 @@
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -105,7 +106,7 @@ def test_a_system_inside_a_system_links_to_its_ends() -> None:
     pipeline = outer.add("pipe", build_system())
     sink = outer.block("Sink")
     outer.connect(source, pipeline)
-    outer.connect(pipeline, sink)
+    outer.connect(pipeline, sink, from_="prediction")
     graph = outer.to_graph()
 
     # The inner System opens as its own overview: its networks are groups inside "pipe".
@@ -129,8 +130,11 @@ def _three_input_system() -> tuple[System, list[str]]:
     system = System()
     critic = system.add("critic", TwinQ(), (torch.randn(1, 3), torch.randn(1, 2), torch.randn(1, 2)))
     names = [node.id for node in system.to_graph().nodes if node.type == "input"]
-    for name in ("obs", "priv", "act"):
-        system.connect(system.block(name, output_shape=[62]), critic, to=None if name == "obs" else name)
+    # Without `to`, the first input is used, with a warning that the others exist.
+    with pytest.warns(UserWarning, match=r"several inputs \(obs, priv, act\); linking to 'obs'. Pass to="):
+        system.connect(system.block("obs", output_shape=[62]), critic)
+    for name in ("priv", "act"):
+        system.connect(system.block(name, output_shape=[62]), critic, to=name)
     return system, names
 
 
@@ -138,7 +142,6 @@ def test_connect_to_picks_one_of_several_inputs() -> None:
     system, names = _three_input_system()
     assert names == ["critic/obs", "critic/priv", "critic/act"]
     links = {(edge.source, edge.target) for edge in system.to_graph().edges if "/" not in edge.source}
-    # Without `to`, the first input is used, as before.
     assert links == {("obs", "critic/obs"), ("priv", "critic/priv"), ("act", "critic/act")}
 
 
@@ -149,6 +152,14 @@ def test_connect_to_an_unknown_input_lists_the_names() -> None:
         system.connect(source, Component("critic", "network"), to="action")
     with pytest.raises(ValueError, match="block"):
         system.connect(Component("critic", "network"), source, to="x")
+
+
+def test_connect_to_a_single_input_does_not_warn() -> None:
+    system = System()
+    source = system.block("camera", output_shape=[4])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        system.connect(source, system.add("net", demo_graph()))
 
 
 def test_connect_shape_overrides_the_link_shape() -> None:

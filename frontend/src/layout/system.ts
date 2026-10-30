@@ -7,6 +7,7 @@
  * source, like a circuit schematic. Plain maths, no three.js.
  */
 import type { FeatureMaps, Graph, GraphGroup, GraphNode } from "../schema";
+import { limits } from "../limits";
 import { type ColumnLayout, layoutGraph } from "./columns";
 
 export const NETWORK_CARD = { width: 260, height: 180 };
@@ -14,8 +15,6 @@ export const PARTS_CARD = { width: 400, height: 280 };
 export const NODE_CARD = { width: 170, height: 76 };
 export const RANK_GAP = 150;
 export const ROW_GAP = 56;
-/** Most strands drawn for one link; wider tensors are capped (the chip shows the real size). */
-export const MAX_LINK_STRANDS = 48;
 /** Widest gap between strands where they meet a card. */
 export const STRAND_SPACING = 5;
 /** How much further out neighbours outside the current level are moved, so their links run off screen. */
@@ -380,7 +379,7 @@ export function layoutSystem(graph: Graph): SystemLayout {
  */
 export function strandCount(shape: number[]): number {
   if (shape.length === 0) return 0;
-  return Math.min(shape.reduce((total, size) => total * size, 1), MAX_LINK_STRANDS);
+  return Math.min(shape.reduce((total, size) => total * size, 1), limits.strands);
 }
 
 /**

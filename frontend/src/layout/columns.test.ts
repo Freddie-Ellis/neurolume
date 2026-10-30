@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { limits } from "../limits";
 import type { Graph, GraphNode } from "../schema";
 import {
   ARC_LANE_GAP,
-  MAX_NEURONS_SHOWN,
   MAX_NEURON_SPACING,
   layoutGraph,
   linkSegments,
@@ -48,7 +48,7 @@ describe("neuronSlots", () => {
 
   it("caps large layers and leaves a gap", () => {
     const { slots, ellipsisY } = neuronSlots(512);
-    expect(slots).toHaveLength(MAX_NEURONS_SHOWN);
+    expect(slots).toHaveLength(limits.neurons);
     expect(ellipsisY).toBeCloseTo(0);
   });
 });
@@ -164,6 +164,19 @@ describe("parallel branches", () => {
       ["a", "c"],
     ]);
     expect(layout.arcs).toEqual([]);
+  });
+
+  it("gathers two heads into the output after them with stubs, not arcs", () => {
+    const heads = graph(
+      [node("input", "input", [4]), node("a", "dense", [8], [4]), node("b", "dense", [2], [8]), node("c", "dense", [2], [8]), node("output", "output", [2], [2])],
+      [["input", "a"], ["a", "b"], ["a", "c"], ["b", "output"], ["c", "output"]],
+    );
+    const layout = layoutGraph(heads);
+    expect(layout.arcs).toEqual([]);
+    expect(layout.stubs.map((stub) => [stub.from.node.id, stub.to.node.id])).toEqual([
+      ["b", "output"],
+      ["c", "output"],
+    ]);
   });
 
   it("still draws a ResNet skip as one arc", () => {

@@ -17,6 +17,7 @@
  * The geometry is static, so it is only redrawn when the view changes.
  */
 import * as THREE from "three";
+import { limits } from "../limits";
 import type { ArcEnd, ArcLayout, BandLayout, ColumnLayout, LinkLayout, StubLayout } from "../layout/columns";
 import { ARC_LANE_GAP, PANEL_GAP, linkSegments, slotFor } from "../layout/columns";
 import { type CurveShape, sampleCurve } from "../layout/curves";
@@ -30,8 +31,6 @@ const CURVE_SEGMENTS = 16;
 const MAX_BEND = 90;
 /** Largest ripple along an edge, in world units. */
 const MAX_WAVE = 24;
-/** Most edges from a stack into a dense layer, strongest first, like the dense-to-dense cap. */
-const MAX_CELL_EDGES = 700;
 /** Edges fade in over this share of their length where they cross a stack, so the maps show through. */
 const FADE = 0.3;
 /** Without weights, this many cells of the last map fan out to every neuron. */
@@ -308,7 +307,7 @@ function cellCurves(link: LinkLayout, sample: WeightSample | undefined, recorded
   }
 
   const maxValue = Math.max(...strongest.values()) || 1;
-  const kept = [...strongest].sort((a, b) => b[1] - a[1]).slice(0, MAX_CELL_EDGES);
+  const kept = [...strongest].sort((a, b) => b[1] - a[1]).slice(0, limits.cellEdges);
   return kept.map(([key, value]) => {
     const index = Math.floor(key / toShown);
     const [x0, y0, z0] = flattenedCell(stack, index, recorded?.channels);

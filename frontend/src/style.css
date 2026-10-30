@@ -615,6 +615,8 @@ button.depth-row:hover {
   flex-direction: column;
   gap: 24px;
   width: 288px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
   padding: 16px;
   box-sizing: border-box;
 }
@@ -677,6 +679,41 @@ button.depth-row:hover {
 
 .segmented button + button {
   border-left: 1px solid var(--surface-border);
+}
+
+/* Detail sliders: label and value on one line, the slider under them. */
+.limits {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.limits label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  row-gap: 4px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.limits output {
+  color: var(--text-1);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.limits input {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+  accent-color: var(--text-2);
+}
+
+.limits button {
+  justify-content: center;
+  padding: 6px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
 }
 
 .colormap-list {

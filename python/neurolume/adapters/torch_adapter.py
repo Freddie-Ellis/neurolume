@@ -53,9 +53,14 @@ ACTIVATION_FUNCTIONS: dict[Callable[..., Any], str] = {
     torch.softmax: "softmax",
     F.softmax: "softmax",
     F.log_softmax: "log_softmax",
+    # Element-wise like an activation, so it folds into its layer instead of becoming a column that the
+    # viewer, with no weights to go on, would join to the layer all-to-all.
+    torch.clamp: "clamp",
+    torch.clip: "clamp",
 }
 
 ACTIVATION_METHODS = {"relu", "sigmoid", "tanh", "softmax", "log_softmax"}
+CLAMP_METHODS = {"clamp", "clip"}
 
 
 def from_torch(
@@ -82,6 +87,11 @@ def from_torch(
     """
     if sample is None:
         raise needs_sample_error(model)
+    if type(model).forward is nn.Module.forward:
+        raise TypeError(
+            f"{type(model).__name__} has no forward method. Neurolume finds the order of the layers and how "
+            "they connect by running the sample through forward, so define forward (or use nn.Sequential)."
+        )
     real_data = not _is_shapes(sample)
     inputs = _as_inputs(sample)
     was_training = model.training
@@ -385,6 +395,9 @@ def _module_node(node_id: str, module: nn.Module, input_shape: list[int], output
     elif isinstance(module, nn.modules.batchnorm._BatchNorm):
         node_type = "norm"
         params = {"num_features": module.num_features, "eps": module.eps}
+    elif isinstance(module, nn.LayerNorm):
+        node_type = "norm"
+        params = {"normalized_shape": list(module.normalized_shape), "eps": module.eps}
 
     return GraphNode(
         id=node_id,
@@ -425,6 +438,8 @@ def _describe_call(fx_node: fx.Node) -> tuple[NodeType, str | None]:
     if fx_node.op == "call_method":
         if target in ACTIVATION_METHODS:
             return "activation", str(target)
+        if target in CLAMP_METHODS:
+            return "activation", "clamp"
         if target == "flatten":
             return "flatten", None
         if target in ("view", "reshape"):

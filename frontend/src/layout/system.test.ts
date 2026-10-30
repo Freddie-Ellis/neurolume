@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { limits } from "../limits";
 import type { Graph, GraphNode } from "../schema";
-import { LANE_HEIGHT, MAX_LINK_STRANDS, MAX_NODE_WIDTH, NODE_CARD, ROW_GAP, isOutside, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
+import { LANE_HEIGHT, MAX_NODE_WIDTH, NODE_CARD, ROW_GAP, isOutside, isSystem, layoutSystem, strandCount, strandSlots, subgraph } from "./system";
 
 function node(id: string, type: GraphNode["type"], group: string | null, output_shape: number[], input_shape: number[] = []): GraphNode {
   return { id, type, label: id, group, input_shape, output_shape, params: {}, param_count: 10, activation: null, notes: null };
@@ -210,14 +211,14 @@ describe("strands", () => {
   it("draws one strand per value the link carries, capped", () => {
     expect(strandCount([32])).toBe(32);
     expect(strandCount([2, 3])).toBe(6);
-    expect(strandCount([784])).toBe(MAX_LINK_STRANDS);
+    expect(strandCount([784])).toBe(limits.strands);
     expect(strandCount([])).toBe(0);
   });
 
   it("spreads strands around the card centre and keeps them inside it", () => {
     const card = layoutSystem(system).cards[0];
-    const slots = strandSlots(MAX_LINK_STRANDS, card);
-    expect(slots).toHaveLength(MAX_LINK_STRANDS);
+    const slots = strandSlots(limits.strands, card);
+    expect(slots).toHaveLength(limits.strands);
     expect((slots[0] + slots[slots.length - 1]) / 2).toBeCloseTo(card.y);
     expect(slots[0] - slots[slots.length - 1]).toBeLessThan(card.height);
     expect(strandSlots(1, card)).toEqual([card.y]);

@@ -16,6 +16,7 @@ layers with the same name.
 from __future__ import annotations
 
 import inspect
+import warnings
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -120,8 +121,9 @@ class System:
             if component.name not in self._networks and component.name not in self._blocks:
                 raise ValueError(f"{component.name!r} is not part of this system")
         link = _Link(source, target, label, to, from_, shape)
-        self._exit_node(source, from_)  # fail now, not in to_graph, when a name is wrong
-        self._entry_node(target, to)
+        # Fail now, not in to_graph, when a name is wrong, and warn when a missing name leaves a guess.
+        self._exit_node(source, from_, warn=True)
+        self._entry_node(target, to, warn=True)
         self._links.append(link)
 
     def to_graph(self) -> Graph:
@@ -183,22 +185,24 @@ class System:
         if name in self._networks or name in self._blocks:
             raise ValueError(f"a component called {name!r} already exists")
 
-    def _exit_node(self, component: Component, name: str | None = None) -> GraphNode:
+    def _exit_node(self, component: Component, name: str | None = None, *, warn: bool = False) -> GraphNode:
         """The node whose output leaves a component: the block itself, or the last
         node of a network that feeds nothing else (its output, or for a System
         added as a network, its last end, such as a prediction block). `name`
         picks one of those ends by id."""
         feeds = {edge.source for edge in self._networks[component.name].edges} if component.name in self._networks else set()
-        return self._end(component, name, "from_", lambda node: node.id not in feeds, last=True)
+        return self._end(component, name, "from_", lambda node: node.id not in feeds, last=True, warn=warn)
 
-    def _entry_node(self, component: Component, name: str | None = None) -> GraphNode:
+    def _entry_node(self, component: Component, name: str | None = None, *, warn: bool = False) -> GraphNode:
         """The node that receives input: the block itself, or the first node of a
         network that nothing feeds (its input, or for a System, its first source).
         `name` picks one of those inputs by id."""
         fed = {edge.target for edge in self._networks[component.name].edges} if component.name in self._networks else set()
-        return self._end(component, name, "to", lambda node: node.id not in fed, last=False)
+        return self._end(component, name, "to", lambda node: node.id not in fed, last=False, warn=warn)
 
-    def _end(self, component: Component, name: str | None, argument: str, is_end: Callable[[GraphNode], bool], *, last: bool) -> GraphNode:
+    def _end(
+        self, component: Component, name: str | None, argument: str, is_end: Callable[[GraphNode], bool], *, last: bool, warn: bool
+    ) -> GraphNode:
         if component.name in self._blocks:
             if name is not None:
                 raise ValueError(f"{argument}={name!r}: {component.name!r} is a block, which has only one input and output")
@@ -207,6 +211,15 @@ class System:
         ends = [node for node in graph.nodes if is_end(node)] or [graph.nodes[-1] if last else graph.nodes[0]]
         if name is None:
             node = ends[-1] if last else ends[0]
+            if warn and len(ends) > 1:
+                # A PyTorch network gets one input per `forward` argument, so without a name every link would
+                # silently land on the first one.
+                warnings.warn(
+                    f"{component.name!r} has several {'outputs' if last else 'inputs'} "
+                    f"({', '.join(end.id for end in ends)}); linking to {node.id!r}. "
+                    f"Pass {argument}='<name>' to connect the right one",
+                    stacklevel=4,
+                )
         else:
             matches = [node for node in ends if node.id == name]
             if not matches:

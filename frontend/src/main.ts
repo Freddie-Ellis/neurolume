@@ -4,6 +4,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 import * as THREE from "three";
 import "./style.css";
 import { layoutGraph } from "./layout/columns";
+import { LIMIT_CONTROLS, type LimitName, limits, setLimit } from "./limits";
 import { isSystem, layoutSystem, subgraph } from "./layout/system";
 import { type Network, buildNetwork, disposeNetwork, escapeHtml } from "./render/network";
 import { buildSystem } from "./render/system";
@@ -81,14 +82,26 @@ interface View {
   build: (theme: Theme) => Network;
 }
 
+// Views lay themselves out again on every build, so a changed Detail limit (limits.ts) applies.
 function networkView(graph: Graph, parent: View | null, origin: string | null = null): View {
-  const layout = layoutGraph(graph);
-  return { kind: "network", graph, bounds: layout.bounds, parent, origin, build: (theme) => buildNetwork(layout, graph, theme) };
+  const view: View = {
+    kind: "network",
+    graph,
+    bounds: layoutGraph(graph).bounds,
+    parent,
+    origin,
+    build: (theme) => {
+      const layout = layoutGraph(graph);
+      view.bounds = layout.bounds;
+      return buildNetwork(layout, graph, theme);
+    },
+  };
+  return view;
 }
 
 /** An overview. Opening a card shows its network, or another overview when the network has parts of its own. */
 function systemView(graph: Graph, open: (view: View) => void, parent: View | null = null, origin: string | null = null): View {
-  const layout = layoutSystem(graph);
+  let layout = layoutSystem(graph);
   const view: View = {
     kind: "system",
     graph,
@@ -99,7 +112,11 @@ function systemView(graph: Graph, open: (view: View) => void, parent: View | nul
       const card = layout.cards.find((candidate) => candidate.group?.id === groupId);
       return card ? { left: card.x - card.width / 2, right: card.x + card.width / 2, top: card.y + card.height / 2, bottom: card.y - card.height / 2 } : null;
     },
-    build: (theme) => buildSystem(layout, theme, (groupId) => open(childView(view, groupId, open))),
+    build: (theme) => {
+      layout = layoutSystem(graph);
+      view.bounds = layout.bounds;
+      return buildSystem(layout, theme, (groupId) => open(childView(view, groupId, open)));
+    },
   };
   return view;
 }
@@ -316,6 +333,18 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
         </div>
       </section>
       <section>
+        <h3>Detail</h3>
+        <div class="limits">
+          ${LIMIT_CONTROLS.map(
+            ([name, text, min, max, step]) => `
+            <label><span>${text}</span><output>${limits[name]}</output>
+              <input type="range" data-limit="${name}" min="${min}" max="${max}" step="${step}" value="${limits[name]}">
+            </label>`,
+          ).join("")}
+          <button data-action="reset-limits">Reset to defaults</button>
+        </div>
+      </section>
+      <section>
         <h3>Controls</h3>
         <dl class="shortcuts">${CONTROLS.map(([action, input]) => `<dt>${action}</dt><dd>${input}</dd>`).join("")}</dl>
       </section>`;
@@ -338,12 +367,27 @@ function buildControls(app: HTMLElement, stage: Stage, initial: Theme): HTMLButt
   panel.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>("button");
     if (target?.dataset.themeName === "dark" || target?.dataset.themeName === "light") setTheme(target.dataset.themeName);
+    if (target?.dataset.action === "reset-limits") {
+      setLimit();
+      stage.setTheme(withColormap(base, colormap)); // rebuilds the view with the new limits
+      render();
+    }
     const chosen = colormaps[base.name].find((candidate) => candidate.name === target?.dataset.colormap);
     if (!chosen) return;
     colormap = chosen;
     saveColormap(base.name, colormap);
     stage.setTheme(withColormap(base, colormap));
     render();
+  });
+  // Sliders show their value while dragging and rebuild the view on release.
+  panel.addEventListener("input", (event) => {
+    const slider = event.target as HTMLInputElement;
+    slider.parentElement!.querySelector("output")!.textContent = slider.value;
+  });
+  panel.addEventListener("change", (event) => {
+    const slider = event.target as HTMLInputElement;
+    setLimit(slider.dataset.limit as LimitName, Number(slider.value));
+    stage.setTheme(withColormap(base, colormap));
   });
   document.addEventListener("pointerdown", (event) => {
     if (!panel.hidden && !controls.contains(event.target as Node)) setOpen(false);
