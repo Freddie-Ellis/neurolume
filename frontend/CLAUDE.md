@@ -26,6 +26,83 @@ from the repo root. The user refreshes the browser; no Python restart needed.
 | `ui/format.ts` | Number/shape/activation/framework formatting |
 | `style.css` | Tokens per `[data-theme]` (`--radius` 2px, `--mono`), labels, cards, segmented toolbar, inspector, colourmap menu, `.notes` |
 
+## Code map (read this before opening the big files)
+
+How a graph becomes pixels: `main.ts` `loadGraph()` → `Stage.show(view)` →
+`view.build(theme)` → `buildSystem(layoutSystem(g))` for overviews or
+`buildNetwork(layoutGraph(g))` for one network → `attachInteraction()`.
+`layout/*` is pure (numbers only, unit-tested); `render/*` turns layouts into
+three.js objects and HTML labels. Grep for the names below; they are in file order.
+
+**`main.ts`**: `View` / `networkView` / `systemView` / `childView` (one screen
+each) · `Stage` (`show`, `back`, `openPath`, `fit`, `setTheme`, `remount`;
+zoom navigation in its constructor's `onUserZoom`) · `pathOf` ·
+`renderDepthTree` · `renderTitleCard` · `buildControls` (Settings panel, keys
+f/t) · `main()` (wires everything; Esc handler).
+
+**`layout/columns.ts`**: constants (spacing, `BAND_ROOM`, `STACK_MARGIN`) ·
+types `ColumnLayout`, `BandLayout` (`kind`), `LinkLayout` (`through`),
+`StubLayout`, `ArcLayout` · `layoutGraph()`, in steps: columns vs bands →
+`reach`/centres → neuron slots → bands spread in the gaps (`runs`) → panels
+(`gutter()`) → links (`flows`) → `layoutArcs()` → stubs → bounds ·
+`linkSegments()` (weights → drawn neuron pairs).
+
+**`layout/maps.ts`**: `mapStack` / `frontSlab` / `slabZ` / `mapPorts` (stack
+geometry) · `sweepOf` (kernel/stride/padding, adaptive pools) · `cellLinks`
+(conv edges) · `gridLines` · `flattenedCell` (flatten index → cell) ·
+`decodeFeatureMaps`.
+
+**`layout/system.ts`**: card sizes · `Card`, `Miniature`/`MiniItem`,
+`CardLink` · `subgraph()` (a group as its own graph, outside neighbours as
+context terminals) · `layoutSystem()` (cards → links → ranks → order → place →
+outside cards shifted out) · `strandCount`/`strandSlots` · `networkCard` /
+`nodeCard` · `layersMiniature` / `partsMiniature` / `layerGlyph`.
+
+**`render/network.ts`** (one network): `buildNetwork()` (edges first, then
+panels, slabs, neurons, bands, labels; returns `Network` = root + `pickables`
++ `edges`) · `buildSlabs` / `mapTexture` · `buildPanel` · `buildBand` /
+`bandLabel` / `bandIcon` / `buildStrip` (flatten) · `outLead` · `titleFor` /
+`nameLayers` / `localId` (display names) · helpers `label`, `roundedRect`,
+`escapeHtml`.
+
+**`render/edges.ts`** (all edge lines): look constants at the top (`FADE`,
+`MERGE_*`, `ARC_*`, `LEAD_*`) · `buildEdges` (between columns, through
+merge/flatten bands) · `buildStub` · `buildArc` (skip connections) ·
+`buildLead` (edges off screen) · curve sources `mapCurves` / `neuronCurves` /
+`cellCurves` · `organicPath` (the wobbly path through waypoints) · `bundle`
+(one `LineSegments`, RGBA alpha, fades) · `gradientColour`, `pseudoRandom`.
+
+**`render/system.ts`** (overview): `buildSystem()` · `buildCard` /
+`cardLabels` / `kindText` · previews: `addPreview` → `drawMiniature` →
+`drawNeurons` / `drawStack` (solid slabs, depth per slab) / `drawMerge` /
+`drawBox` (recurses), `strands` (curved preview links) · links between cards:
+`buildLink` → `buildStrands` (into layer cards: `ports`; into dense layers: fan
+out) or `buildRibbon` (unknown shape) · `outsideAlpha`.
+
+**`render/viewer.ts`**: `Viewer` (renderer, ortho camera, bloom,
+render-on-demand via `requestRender`, `fitTo`/`fitTarget`, `screenRect` /
+`frameIn`, `pauseZoom`, pan/zoom in `attachPanZoom`, label detail levels in
+`renderIfNeeded`).
+
+**`ui/interaction.ts`**: `pickAt` (raycast pickables) · `attachInteraction`
+(hover highlight + tooltip, click → inspector or `activate`, double-click fit).
+
+### Where to change what
+
+| To change… | Edit |
+| --- | --- |
+| How edges look (wobble, fades, merge neck, arcs) | constants at the top of `render/edges.ts`, then `organicPath` / `buildArc` |
+| Spacing between layers or bands, panel edges | `layoutGraph` constants and the `gutter()` step in `layout/columns.ts` |
+| Which nodes are bands vs columns, band kinds | `BAND_TYPES`, `MERGE_TYPES` and the `kind` line in `layoutGraph` |
+| A band's chip text or icon | `bandText` / `bandIcon` in `render/network.ts` |
+| Layer names shown | `titleFor` / `localId` in `render/network.ts` |
+| Card sizes, ranking, what a card previews | `layout/system.ts` (`*_CARD`, `layoutSystem`, `*Miniature`) |
+| How a preview is drawn | `drawMiniature` and friends in `render/system.ts` |
+| Links between cards | `buildLink` / `buildStrands` in `render/system.ts` |
+| What opening/going back does, zoom thresholds | `Stage` and the `ZOOM_*` constants in `main.ts` |
+| Label hiding when zoomed out | `LOW/MEDIUM_DETAIL_ZOOM` in `render/viewer.ts`, `.labels[data-detail]` rules in `style.css` |
+| Colours, fonts | `theme.ts`, tokens at the top of `style.css` |
+
 ## Key design decisions (don't undo without asking)
 
 - **Render on demand only.** No per-frame animation; a continuous "flow"

@@ -11,6 +11,18 @@ More detail lives next to the code:
 - `frontend/CLAUDE.md` — viewer: layout, rendering, interaction, themes
 - `tests/CLAUDE.md`, `examples/CLAUDE.md`, `scripts/CLAUDE.md`
 
+## Working here
+
+- **Start from the CLAUDE.md files, not the code.** Each one has a code map
+  (functions in file order) and a "where to change what" table; open only the
+  function you need (grep its name) rather than reading whole files.
+- **Be lazy with code (user preference).** The code base is getting large: write
+  only what the change needs, reuse existing helpers, don't add options,
+  fallbacks or abstractions nobody asked for, and delete code a change makes
+  dead. Prefer a small edit to a new function, and a new function to a new module.
+- Keep the CLAUDE.md files current when behaviour or structure changes (one or
+  two lines, in the right file); they are what the next session reads.
+
 ## How the pieces connect
 
 ```

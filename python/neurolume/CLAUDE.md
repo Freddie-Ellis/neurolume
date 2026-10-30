@@ -15,6 +15,27 @@
 | `server.py` | FastAPI app, `show()` (background thread, free port), `demo_graph()` fallback |
 | `demo.py` | `demo_model()` / `demo_input()` (torch imported inside), `sample_digit()`: a drawn "7" (numpy) for CNN examples |
 
+## Code map
+
+**`adapters/torch_adapter.py`**: `from_torch()` (entry: trace → nodes/edges →
+fold activations → weights → feature maps → groups) · `_RecordingShapeProp`
+(records real outputs) · grouping: `_group_by_submodule` (the group tree),
+`_group_loose_ends` (stem/head), `_scope`, `_parent_name`, `_module_names` ·
+tracing: `_trace_with_fx`, fallback `_walk_modules` · per layer:
+`_module_node` (modules → node type + params), `_describe_call` (functions such
+as `+`, `torch.cat`, `flatten`) · shape helpers at the end.
+
+**`adapters/keras_adapter.py`**: `from_keras()` (entry) · `_read_layers`
+(walks layers, opens nested models as groups) · `_layer_node` (layer → node
+type + params) · `_image_outputs` (feature maps, recursing into nested models)
+· `_rows_channels_first` / `_flattened_image_shape` (Dense-after-Flatten weight
+order) · shape/param helpers.
+
+**`adapters/base.py`**: `to_graph()` (framework detection, Keras first),
+`fold_activations()`. **`system.py`**: `System.add/block/connect/to_graph`.
+**`server.py`**: `create_app` (FastAPI), `show` / `show_demo`, `Viewer`
+(handle returned in notebooks), `demo_graph` (fallback without torch).
+
 ## Graph conventions
 
 - Shapes **exclude the batch dimension** and are **channels-first** for images.
