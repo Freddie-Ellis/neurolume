@@ -64,8 +64,8 @@ const ZOOM_OUT_TO_PARENT = 0.5;
 const ZOOM_IN_FILL = 0.6;
 /** After opening a network from the overview, scroll zooming is ignored this long. */
 const ZOOM_PAUSE_MS = 300;
-/** Going back up a level glides out from the card you were in to the whole overview this long. */
-const ZOOM_OUT_MS = 550;
+/** The furthest you can zoom out, as a share of the fit zoom. Just under ZOOM_OUT_TO_PARENT, so zooming out of a nested view still goes back up. */
+const MIN_ZOOM_OF_FIT = 0.45;
 
 /** One screen: either the system overview or the detailed view of one network. */
 interface View {
@@ -74,9 +74,9 @@ interface View {
   bounds: Bounds;
   /** Where Esc and the Back button go, or null at the top level. */
   parent: View | null;
-  /** The card in the parent this view was opened from, so going back can start on it. */
+  /** The group (in the parent) this view shows, or null at the top level. */
   origin: string | null;
-  /** Where a card sits in this view (overviews only), by group id. */
+  /** Where a group's card sits (overviews only), so zooming out of it can start from it. */
   cardBounds?: (groupId: string) => Bounds | null;
   build: (theme: Theme) => Network;
 }
@@ -99,13 +99,15 @@ function systemView(graph: Graph, open: (view: View) => void, parent: View | nul
       const card = layout.cards.find((candidate) => candidate.group?.id === groupId);
       return card ? { left: card.x - card.width / 2, right: card.x + card.width / 2, top: card.y + card.height / 2, bottom: card.y - card.height / 2 } : null;
     },
-    build: (theme) =>
-      buildSystem(layout, theme, (groupId) => {
-        const part = subgraph(graph, groupId);
-        open(isSystem(part) ? systemView(part, open, view, groupId) : networkView(part, view, groupId));
-      }),
+    build: (theme) => buildSystem(layout, theme, (groupId) => open(childView(view, groupId, open))),
   };
   return view;
+}
+
+/** The view of one group inside an overview: another overview if it has parts, else its network. */
+function childView(parent: View, groupId: string, open: (view: View) => void): View {
+  const part = subgraph(parent.graph, groupId);
+  return isSystem(part) ? systemView(part, open, parent, groupId) : networkView(part, parent, groupId);
 }
 
 /**
@@ -118,6 +120,8 @@ class Stage {
   private interaction: Interaction | null = null;
   /** The zoom at which the current view fits the screen. */
   private fitZoom = 1;
+  /** The zoom before the latest scroll, to tell zooming in from zooming out. */
+  private lastZoom = 1;
 
   constructor(
     private readonly viewer: Viewer,
@@ -129,8 +133,10 @@ class Stage {
     // Scrolling moves between levels: zoom well out of a network to return to the
     // overview, or zoom into a network card until it fills the screen to open it.
     viewer.onUserZoom = (zoom, clientX, clientY) => {
+      const zoomingIn = zoom > this.lastZoom;
+      this.lastZoom = zoom;
       if (this.view?.parent && zoom < this.fitZoom * ZOOM_OUT_TO_PARENT) this.back();
-      else if (zoom > this.fitZoom) this.openCardUnder(clientX, clientY, zoom);
+      else if (zoomingIn && zoom > this.fitZoom) this.openCardUnder(clientX, clientY, zoom);
     };
   }
 
@@ -144,47 +150,51 @@ class Stage {
     if (fills) card.activate();
   }
 
-  /**
-   * Show a view. `from` is the card it was reached from when going back up:
-   * the view then starts framed on that card and glides out to fit, so you
-   * see where you were instead of jumping.
-   */
-  show(view: View, from: string | null = null): void {
-    const goingIn = this.view !== null && view.parent !== null && from === null;
+  show(view: View): void {
+    const goingDeeper = this.view !== null && pathOf(view).length > pathOf(this.view).length;
     this.view = view;
     this.onViewChange(view); // first, so the title card has its final size before fitting
     this.remount();
-    const card = from ? view.cardBounds?.(from) : null;
-    if (card) {
-      this.viewer.fitTo(card, 1.6);
-      this.fitZoom = this.viewer.flyTo(view.bounds, ZOOM_OUT_MS);
-      // A scroll that is still going would otherwise zoom back into the card mid-glide.
-      this.viewer.pauseZoom(ZOOM_OUT_MS + ZOOM_PAUSE_MS);
-      return;
-    }
     this.fit();
     // Only when going in: leftover scrolling would otherwise zoom straight into the network.
-    if (goingIn) this.viewer.pauseZoom(ZOOM_PAUSE_MS);
+    if (goingDeeper) this.viewer.pauseZoom(ZOOM_PAUSE_MS);
   }
 
-  /** Go up to the parent view. Returns false at the top level. */
+  /**
+   * Go up to the parent view. Returns false at the top level. The parent
+   * opens with the card you were in exactly where the level you left was on
+   * screen, so going on zooming out pulls back from that card naturally,
+   * instead of jumping to the whole overview.
+   */
   back(): boolean {
-    if (!this.view?.parent) return false;
-    this.show(this.view.parent, this.view.origin);
+    const child = this.view;
+    if (!child?.parent) return false;
+    const where = this.viewer.screenRect(child.bounds);
+    this.show(child.parent);
+    const card = child.origin ? child.parent.cardBounds?.(child.origin) : null;
+    if (card) {
+      this.viewer.frameIn(card, where);
+      this.lastZoom = this.viewer.camera.zoom;
+    }
     return true;
   }
 
-  /** Jump up to an ancestor of the current view, gliding out from the card on the way there. */
-  goUpTo(target: View): void {
-    let child = this.view;
-    while (child && child.parent !== target) child = child.parent;
-    if (child) this.show(target, child.origin);
+  /** Open any level, given its group ids from the top level down ([] for the top). */
+  openPath(path: string[]): void {
+    let view = this.view;
+    while (view?.parent) view = view.parent;
+    if (!view) return;
+    const open = (next: View) => this.show(next);
+    for (const id of path) view = childView(view, id, open);
+    this.show(view);
   }
 
   fit(): void {
     if (!this.view) return;
     this.viewer.fitTo(this.view.bounds);
     this.fitZoom = this.viewer.camera.zoom;
+    this.lastZoom = this.fitZoom;
+    this.viewer.minZoom = this.fitZoom * MIN_ZOOM_OF_FIT;
   }
 
   setTheme(theme: Theme): void {
@@ -210,24 +220,42 @@ class Stage {
   }
 }
 
+/** The group ids from the top level down to a view ([] for the top level). */
+function pathOf(view: View): string[] {
+  const path: string[] = [];
+  for (let level: View | null = view; level?.origin; level = level.parent) path.unshift(level.origin);
+  return path;
+}
+
 /**
- * Where you are: every level from the top down to this one, indented like a
- * tree. Earlier levels are buttons that go back up to them. Hidden at the top.
+ * The whole model as a tree: the top level and every group in it, indented
+ * by depth, so any level can be opened from anywhere. The current level is
+ * marked, and the levels above it are emphasised. Hidden when there are no groups.
  */
 function renderDepthTree(tree: HTMLElement, view: View, stage: Stage): void {
-  const path: View[] = [];
-  for (let level: View | null = view; level; level = level.parent) path.unshift(level);
-  tree.hidden = path.length < 2;
-  tree.innerHTML = `<p class="eyebrow">Depth</p>`;
-  path.forEach((level, depth) => {
-    const row = document.createElement(level === view ? "span" : "button");
+  let top = view;
+  while (top.parent) top = top.parent;
+  const { groups } = top.graph;
+  tree.hidden = groups.length === 0;
+  const here = pathOf(view);
+  tree.innerHTML = `<p class="eyebrow">Levels</p>`;
+  const addRow = (name: string, path: string[]) => {
+    // A level is above this one when its path starts this one's.
+    const above = path.every((id, i) => here[i] === id);
+    const current = above && path.length === here.length;
+    const row = document.createElement(current ? "span" : "button");
     row.className = "depth-row";
-    row.style.paddingLeft = `${8 + depth * 14}px`;
-    row.innerHTML = `${depth > 0 ? '<span class="depth-branch"></span>' : ""}${escapeHtml(level.graph.model.name)}`;
-    if (level === view) row.setAttribute("aria-current", "true");
-    else row.addEventListener("click", () => stage.goUpTo(level));
+    row.style.paddingLeft = `${8 + path.length * 14}px`;
+    row.innerHTML = `${path.length > 0 ? '<span class="depth-branch"></span>' : ""}${escapeHtml(name)}`;
+    if (current) row.setAttribute("aria-current", "true");
+    else {
+      if (above) row.classList.add("is-ancestor");
+      row.addEventListener("click", () => stage.openPath(path));
+    }
     tree.append(row);
-  });
+    for (const child of groups.filter((group) => group.parent === (path[path.length - 1] ?? null))) addRow(child.label, [...path, child.id]);
+  };
+  addRow(top.graph.model.name, []);
 }
 
 function renderTitleCard(card: HTMLElement, view: View): void {
@@ -379,12 +407,14 @@ async function main(): Promise<void> {
   app.append(titleCard, depthTree);
   // Fitting leaves room for the title card, so it never covers the first panel's header.
   viewer.fitInsetTop = () => titleCard.getBoundingClientRect().bottom - app.getBoundingClientRect().top;
-  viewer.fitInsetBottom = () => (depthTree.hidden ? 0 : app.getBoundingClientRect().bottom - depthTree.getBoundingClientRect().top);
+  // A short tree is kept clear of by fitting above it; a tall one (a ResNet's) by fitting beside it.
+  const treeIsTall = () => depthTree.getBoundingClientRect().height > app.getBoundingClientRect().height / 4;
+  viewer.fitInsetBottom = () => (depthTree.hidden || treeIsTall() ? 0 : app.getBoundingClientRect().bottom - depthTree.getBoundingClientRect().top);
+  viewer.fitInsetLeft = () => (depthTree.hidden || !treeIsTall() ? 0 : depthTree.getBoundingClientRect().right - app.getBoundingClientRect().left);
   backButton = buildControls(app, stage, theme);
 
   const open = (view: View) => stage?.show(view);
   stage.show(isSystem(graph) ? systemView(graph, open) : networkView(graph, null));
-
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     // Esc closes the inspector first, then steps back out of a network.

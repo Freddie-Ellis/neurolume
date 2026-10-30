@@ -50,7 +50,7 @@ export function buildNetwork(layout: Layout, graph: Graph, theme: Theme): Networ
       .map((column) => buildLead({ column }, "in", theme, graph.feature_maps?.[column.node.id])),
     ...layout.bands
       .filter((band) => band.node.type === "output" && typeof band.node.params["context"] === "string")
-      .map((band) => buildLead({ band }, "out", theme)),
+      .flatMap((band) => outLead(layout, graph, band, theme)),
   ];
   edges.forEach((bundle) => root.add(bundle.lines));
   const touching = (node: GraphNode) => edges.filter((bundle) => bundle.ends.includes(node.id));
@@ -336,6 +336,24 @@ function buildStrip(band: BandLayout, theme: Theme): THREE.LineSegments {
   );
   strip.renderOrder = 3;
   return strip;
+}
+
+/**
+ * The edges leaving the view through an output: they start at what feeds it,
+ * the nearest layer or add/concat before it, and pass the plain bands on the
+ * way (a ReLU after the add), so there is no gap before the output chip.
+ */
+function outLead(layout: Layout, graph: Graph, output: BandLayout, theme: Theme): EdgeBundle[] {
+  const through = [output];
+  for (let i = graph.nodes.indexOf(output.node) - 1; i >= 0; i -= 1) {
+    const node = graph.nodes[i];
+    const column = layout.columns.find((candidate) => candidate.node === node);
+    if (column) return [buildLead({ column }, "out", theme, graph.feature_maps?.[node.id], through)];
+    const band = layout.bands.find((candidate) => candidate.node === node);
+    if (band?.kind === "merge") return [buildLead({ band }, "out", theme, undefined, through)];
+    if (band) through.unshift(band);
+  }
+  return [buildLead({ band: output }, "out", theme)];
 }
 
 function bandText(node: GraphNode): string {

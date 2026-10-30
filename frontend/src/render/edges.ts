@@ -172,23 +172,35 @@ export function buildArc(arc: ArcLayout, theme: Theme, recorded?: FeatureMaps): 
 }
 
 /**
- * Edges to or from a layer outside this view (one level up): they leave the
- * input layer's cells or the output band and run off the edge of the view,
- * fading out, as if heading on to the rest of the network.
+ * Edges to or from a layer outside this view (one level up), running off the
+ * edge of the view and fading out, as if heading on to the rest of the
+ * network. In: from off screen into the input layer's cells. Out: from what
+ * feeds the output (a layer or an add), through `through` (the bands on the
+ * way, ending with the output itself), then off screen.
  */
-export function buildLead(end: ArcEnd, direction: "in" | "out", theme: Theme, recorded?: FeatureMaps): EdgeBundle {
+export function buildLead(end: ArcEnd, direction: "in" | "out", theme: Theme, recorded?: FeatureMaps, through: BandLayout[] = []): EdgeBundle {
   const node = "column" in end ? end.column.node : end.band.node;
   const extent = "column" in end ? Math.max(...end.column.slots.map(Math.abs)) : end.band.halfHeight;
   const lines = Array.from({ length: STUB_LINES }, (_, k): Line => {
     const random = (n: number) => pseudoRandom(k * 7.3 + n + node.id.length);
     const [x, y, z] = "column" in end ? columnPoint(end.column, k, STUB_LINES, recorded, direction === "in" ? "entry" : "exit") : [...bandEnd(end.band, k), 0];
-    const far: [number, number] = [x + (direction === "in" ? -LEAD_LENGTH : LEAD_LENGTH), y * 0.4 + (random(1) - 0.5) * extent * 0.6];
-    const points = direction === "in" ? organicPath([far, [x, y]], 0, z, extent, k * 31 + 7) : organicPath([[x, y], far], z, 0, extent, k * 31 + 11);
-    return { points, strength: 0.4 + 0.6 * random(2) };
+    if (direction === "in") {
+      const far: [number, number] = [x - LEAD_LENGTH, y * 0.4 + (random(1) - 0.5) * extent * 0.6];
+      return { points: organicPath([far, [x, y]], 0, z, extent, k * 31 + 7), strength: 0.4 + 0.6 * random(2) };
+    }
+    // Out: pinch through the bands on the way (the output chip) as a bundle, then spread off screen.
+    const waypoints = through.map((band): [number, number] => [band.x, (random(3) - 0.5) * MERGE_NECK * 2]);
+    const last = through[through.length - 1]?.x ?? x;
+    const far: [number, number] = [last + LEAD_LENGTH, (random(1) - 0.5) * extent * 0.8];
+    // Short hops between bands curl into loops at full wobble: keep them calm.
+    const calm = new Set(through.slice(0, -1).map((_, s) => s + 1));
+    if ("band" in end) calm.add(0);
+    return { points: organicPath([[x, y], ...waypoints, far], z, 0, extent, k * 31 + 11, calm), strength: 0.4 + 0.6 * random(2) };
   });
   const maps = "column" in end && end.column.maps ? FADE : 0;
   const fade = direction === "in" ? { start: 0, end: maps } : { start: maps, end: 0 };
-  return bundle(direction === "in" ? 0 : 1, [node.id, node.id], lines, STUB_LINES, theme, fade, direction === "in" ? "start" : "end");
+  const target = through[through.length - 1]?.node ?? node;
+  return bundle(direction === "in" ? 0 : 1, [node.id, target.id], lines, STUB_LINES, theme, fade, direction === "in" ? "start" : "end");
 }
 
 /** The middle of a column's bottom edge: under its front slab, or under its lowest neuron. */

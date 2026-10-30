@@ -9,7 +9,7 @@
  */
 import * as THREE from "three";
 import { sampleCurve } from "../layout/curves";
-import { type Card, type CardLink, type MiniItem, type Miniature, type SystemLayout, isOutside, strandCount, strandSlots } from "../layout/system";
+import { type Card, type CardLink, type MiniItem, type Miniature, type SystemLayout, isLayer, isOutside, strandCount, strandSlots } from "../layout/system";
 import type { Theme } from "../theme";
 import { formatCount, formatFramework, formatParams, formatShape } from "../ui/format";
 import { gradientColour, pseudoRandom } from "./edges";
@@ -21,7 +21,11 @@ const ARROW_LENGTH = 10;
 const ARROW_WIDTH = 9;
 /** Space inside a network card for the preview, below the header and above the footer. */
 const PREVIEW_INSET = { left: 28, right: 28, top: 64, bottom: 40 };
-const PREVIEW_MAX_DOTS = 9;
+/** Neurons drawn in a preview column, at most: enough that a 10-class output shows every class. */
+const PREVIEW_MAX_DOTS = 12;
+/** Preview slabs sit in front of the strands (z 0), each nearer one this much further forward. */
+const SLAB_FILL_Z = 1;
+const SLAB_FILL_STEP = 0.02;
 /** Most strands drawn for one link in a preview. */
 const PREVIEW_STRANDS = 40;
 /** How many levels of parts a preview draws inside each other before boxes stay empty. */
@@ -34,6 +38,8 @@ const STRAND_BEND = 14;
 const OUTSIDE_FADE = 0.7;
 /** How far from the shown card the chip naming an outside neighbour sits. */
 const OUTSIDE_CHIP = 80;
+/** About how many strands a link into a dense layer card draws, fanning out to its neurons. */
+const DENSE_STRANDS = 60;
 
 export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: string) => void): Network {
   const root = new THREE.Group();
@@ -41,6 +47,9 @@ export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: 
   const previewLines: number[] = [];
   const previewColours: number[] = [];
   const dots: Dot[] = [];
+  const fills: number[] = [];
+  // Where links join a single-layer card: its neurons or its stack, so the strands run through the layer.
+  const ports = new Map<Card, Anchors>();
 
   for (const card of layout.cards) {
     if (isOutside(card.node)) continue; // only its links are drawn, running off screen
@@ -49,13 +58,14 @@ export function buildSystem(layout: SystemLayout, theme: Theme, open: (groupId: 
       const groupId = card.group.id;
       pickable.activate = () => open(groupId);
     }
-    const partLabels = addPreview(card, theme, previewLines, previewColours, dots);
-    root.add(pickable.mesh, pickable.outline, ...cardLabels(card, pickable), ...partLabels);
+    const preview = addPreview(card, theme, previewLines, previewColours, dots, fills);
+    if (card.kind === "node" && isLayer(card.node) && preview.anchors.length === 1) ports.set(card, preview.anchors[0]);
+    root.add(pickable.mesh, pickable.outline, ...cardLabels(card, pickable), ...preview.labels);
     pickables.push(pickable);
   }
   const rankCount = Math.max(...layout.cards.map((card) => card.rank)) + 1;
-  for (const link of layout.links) root.add(...buildLink(link, theme, rankCount));
-  root.add(buildPreviewLines(previewLines, previewColours, theme), buildDots(dots, theme));
+  for (const link of layout.links) root.add(...buildLink(link, theme, rankCount, ports));
+  root.add(buildPreviewLines(previewLines, previewColours, theme), buildDots(dots, theme), buildSlabFills(fills, theme));
 
   return { root, pickables, edges: [], theme };
 }
@@ -149,18 +159,25 @@ function previewArea(card: Card): Area {
  * Draw a card's miniature (see Miniature in layout/system.ts) under its header:
  * a network's layers, a network's parts (each with its own miniature inside),
  * or a single layer's stack or neurons, drawn large so the card reads as that
- * layer. Returns the small labels of part boxes.
+ * layer. Returns the small labels of part boxes, and where links can join each item.
  */
-function addPreview(card: Card, theme: Theme, lines: number[], colours: number[], dots: Dot[]): THREE.Object3D[] {
-  if (card.miniature.items.length === 0) return [];
-  const segment: Segment = (x0, y0, x1, y1, t) => {
+function addPreview(
+  card: Card,
+  theme: Theme,
+  lines: number[],
+  colours: number[],
+  dots: Dot[],
+  fills: number[],
+): { labels: THREE.Object3D[]; anchors: Anchors[] } {
+  if (card.miniature.items.length === 0) return { labels: [], anchors: [] };
+  const segment: Segment = (x0, y0, x1, y1, t, z = 0) => {
     const colour = gradientColour(theme.edgeGradient, t);
-    lines.push(x0, y0, 0, x1, y1, 0);
+    lines.push(x0, y0, z, x1, y1, z);
     colours.push(colour.r, colour.g, colour.b, colour.r, colour.g, colour.b);
   };
   const labels: THREE.Object3D[] = [];
-  drawMiniature(card.miniature, previewArea(card), { segment, dots, labels }, 0);
-  return labels;
+  const anchors = drawMiniature(card.miniature, previewArea(card), { segment, dots, labels, fills }, 0);
+  return { labels, anchors };
 }
 
 interface Area {
@@ -169,14 +186,18 @@ interface Area {
   top: number;
   bottom: number;
 }
-type Point = [number, number];
+/** x, y, and for a point on a preview slab its depth, so strands there sit just in front of that slab (else 0). */
+type Point = [number, number, number?];
 /** A preview neuron: x, y and its scale (smaller inside nested boxes). */
 type Dot = [number, number, number];
-type Segment = (x0: number, y0: number, x1: number, y1: number, t: number) => void;
+/** A line of the preview, coloured at `t` along the gradient; `z` above 0 puts it in front of the strands (slab outlines). */
+type Segment = (x0: number, y0: number, x1: number, y1: number, t: number, z?: number) => void;
 interface Pen {
   segment: Segment;
   dots: Dot[];
   labels: THREE.Object3D[];
+  /** Triangles of the stacks' solid slabs (x, y, z per corner). */
+  fills: number[];
 }
 /** Where links attach to an item: points on its left and right, and the middle of its bottom for arcs. */
 interface Anchors {
@@ -185,7 +206,7 @@ interface Anchors {
   bottom: Point;
 }
 
-function drawMiniature({ items, links, arcs }: Miniature, area: Area, pen: Pen, depth: number): void {
+function drawMiniature({ items, links, arcs }: Miniature, area: Area, pen: Pen, depth: number): Anchors[] {
   const width = area.right - area.left;
   const height = area.top - area.bottom;
   const middle = (area.top + area.bottom) / 2;
@@ -195,7 +216,7 @@ function drawMiniature({ items, links, arcs }: Miniature, area: Area, pen: Pen, 
 
   const anchors = items.map((item): Anchors => {
     if (item.kind === "neurons") return drawNeurons(item.units, px(item.x), middle, height, depth, pen.dots);
-    if (item.kind === "maps") return drawStack(item, px(item.x), middle, alone ? Math.min(height * 0.8, width * 0.6) : Math.min(height * 0.7, 30), pen.segment);
+    if (item.kind === "maps") return drawStack(item, px(item.x), middle, alone ? Math.min(height * 0.8, width * 0.6) : Math.min(height * 0.7, 30), pen);
     if (item.kind === "merge") return drawMerge(item, px(item.x), middle, pen.segment);
     return drawBox(item, area, pen, depth);
   });
@@ -208,22 +229,27 @@ function drawMiniature({ items, links, arcs }: Miniature, area: Area, pen: Pen, 
     const points = sampleCurve(x0, y0, x1, y1, 10, { handle: 0, bend: (dip - (y0 + y1) / 2) * 1.33 });
     for (let k = 1; k < points.length; k += 1) pen.segment(points[k - 1].x, points[k - 1].y, points[k].x, points[k].y, items[to].x);
   }
+  return anchors;
 }
 
 /**
  * Curved strands between two items' anchor points, like the edges of the
- * detailed view: every pair (sampled down to PREVIEW_STRANDS), each with its
+ * detailed view: a sample of all pairs (about PREVIEW_STRANDS, and every point touched), each with its
  * own bow, so a dense link reads as a woven bundle rather than ruled lines.
  */
 function strands(from: Point[], to: Point[], t: number, seed: number, segment: Segment): void {
-  const pairs = from.flatMap((start) => to.map((end) => [start, end] as const));
-  const every = Math.max(1, Math.ceil(pairs.length / PREVIEW_STRANDS));
+  const pairs = from.flatMap((start, a) => to.map((end, b) => ({ start, end, a, b })));
+  const keep = PREVIEW_STRANDS / pairs.length;
   const span = Math.max(...[...from, ...to].map(([, y]) => y)) - Math.min(...[...from, ...to].map(([, y]) => y));
-  pairs.forEach(([[x0, y0], [x1, y1]], i) => {
-    if (i % every !== 0) return;
+  pairs.forEach(({ start: [x0, y0, z0 = 0], end: [x1, y1, z1 = 0], a, b }, i) => {
     const random = (n: number) => pseudoRandom(i * 3.7 + seed * 101 + n);
+    // A random sample, plus a diagonal of pairs so every point on both sides gets a strand.
+    const diagonal = a === Math.floor((b * from.length) / to.length) || b === Math.floor((a * to.length) / from.length);
+    if (!diagonal && random(0) >= keep) return;
     const points = sampleCurve(x0, y0, x1, y1, 8, { handle: 0.3 + 0.4 * random(1), bend: (random(2) - 0.5) * (span * 0.25 + 3) });
-    for (let k = 1; k < points.length; k += 1) segment(points[k - 1].x, points[k - 1].y, points[k].x, points[k].y, t);
+    // Depth runs from one end's slab to the other's, so only slabs in front of a strand's own slab hide it.
+    const z = (k: number) => z0 + ((z1 - z0) * (k - 0.5)) / (points.length - 1);
+    for (let k = 1; k < points.length; k += 1) segment(points[k - 1].x, points[k - 1].y, points[k].x, points[k].y, t, z(k));
   });
 }
 
@@ -237,8 +263,12 @@ function drawNeurons(units: number, x: number, middle: number, height: number, d
   return { left: column, right: column, bottom: column[column.length - 1] };
 }
 
-/** A few offset squares for a feature-map stack, sized like its maps (`largest` is the side of the biggest). */
-function drawStack(item: Extract<MiniItem, { kind: "maps" }>, x: number, middle: number, largest: number, segment: Segment): Anchors {
+/**
+ * A few offset squares for a feature-map stack, sized like its maps (`largest`
+ * is the side of the biggest). The squares are solid, nearer ones in front, so
+ * like the slabs of the detailed view they hide the strands and slabs behind them.
+ */
+function drawStack(item: Extract<MiniItem, { kind: "maps" }>, x: number, middle: number, largest: number, { segment, fills }: Pen): Anchors {
   const side = largest * (0.45 + 0.55 * item.size);
   const shown = Math.min(item.channels, 4);
   const step = Math.max(1.5, side * 0.1);
@@ -249,15 +279,24 @@ function drawStack(item: Extract<MiniItem, { kind: "maps" }>, x: number, middle:
   for (let k = shown - 1; k >= 0; k -= 1) {
     const [left, bottom] = [x0 - side / 2 + k * step, y0 - side / 2 + k * step];
     const [right, top] = [left + side, bottom + side];
-    segment(left, bottom, right, bottom, item.x);
-    segment(right, bottom, right, top, item.x);
-    segment(right, top, left, top, item.x);
-    segment(left, top, left, bottom, item.x);
+    const z = SLAB_FILL_Z + (shown - 1 - k) * SLAB_FILL_STEP; // the front square (k = 0) nearest
+    fills.push(left, bottom, z, right, bottom, z, right, top, z, left, bottom, z, right, top, z, left, top, z);
+    const outline = z + SLAB_FILL_STEP / 2;
+    segment(left, bottom, right, bottom, item.x, outline);
+    segment(right, bottom, right, top, item.x, outline);
+    segment(right, top, left, top, item.x, outline);
+    segment(left, top, left, bottom, item.x, outline);
   }
-  const rows = [-0.3, -0.15, 0, 0.15, 0.3].map((share) => y0 + share * side);
+  // Links reach every slab on both sides, as in the detailed view: every map is
+  // read and written. (Entering the front and leaving the back read as data
+  // flowing from front slab to back slab, which it doesn't.) Each point sits
+  // just in front of its slab, so the slabs nearer the front hide its strands
+  // and the slabs behind don't.
+  const slabs = Array.from({ length: shown }, (_, k) => ({ offset: k * step, z: SLAB_FILL_Z + (shown - 1 - k) * SLAB_FILL_STEP + SLAB_FILL_STEP * 0.75 }));
+  const rows = [-0.25, 0.05, 0.3].map((share) => share * side);
   return {
-    left: rows.map((y): Point => [x0 - side / 2, y]),
-    right: rows.map((y): Point => [x0 + side / 2 + back, y + back]),
+    left: slabs.flatMap(({ offset, z }) => rows.map((dy): Point => [x0 - side / 2 + offset, y0 + dy + offset, z])),
+    right: slabs.flatMap(({ offset, z }) => rows.map((dy): Point => [x0 + side / 2 + offset, y0 + dy + offset, z])),
     bottom: [x0, y0 - side / 2],
   };
 }
@@ -332,6 +371,13 @@ function buildPreviewLines(lines: number[], colours: number[], theme: Theme): TH
   return segments;
 }
 
+/** The stacks' solid slabs, in the panel colour like the detailed view's (opaque, so they hide what is behind). */
+function buildSlabFills(fills: number[], theme: Theme): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(fills, 3));
+  return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: theme.panelFill }));
+}
+
 function buildDots(dots: Dot[], theme: Theme): THREE.InstancedMesh {
   const mesh = new THREE.InstancedMesh(
     new THREE.CircleGeometry(PREVIEW_DOT, 16),
@@ -349,12 +395,11 @@ function buildDots(dots: Dot[], theme: Theme): THREE.InstancedMesh {
  * running from the right edge of one card to the left edge of the next. A link
  * whose shape is unknown falls back to a single ribbon with an arrowhead.
  */
-function buildLink(link: CardLink, theme: Theme, rankCount: number): THREE.Object3D[] {
+function buildLink(link: CardLink, theme: Theme, rankCount: number, ports: Map<Card, Anchors>): THREE.Object3D[] {
   const x0 = link.from.x + link.from.width / 2;
   const x1 = link.to.x - link.to.width / 2;
-  // A link to outside fades away, which a ribbon can't: it gets a few strands even without a shape.
-  const count = strandCount(link.shape) || (isOutside(link.from.node) || isOutside(link.to.node) ? 8 : 0);
-  const objects = count > 0 ? [buildStrands(link, count, theme, rankCount)] : buildRibbon(link, theme);
+  const count = strandCount(link.shape);
+  const objects = count > 0 ? [buildStrands(link, count, theme, rankCount, ports)] : buildRibbon(link, theme);
 
   // A link to or from outside this level names where it goes, near the card that is shown.
   const outside = isOutside(link.from.node) ? link.from.node : isOutside(link.to.node) ? link.to.node : null;
@@ -369,40 +414,62 @@ function buildLink(link: CardLink, theme: Theme, rankCount: number): THREE.Objec
   return [...objects, chip];
 }
 
-/** Strand i leaves slot i of the source card and enters slot i of the target, like a cable. */
-function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: number): THREE.LineSegments {
+/**
+ * Strand i leaves slot i of the source card and enters slot i of the target,
+ * like a cable. At a single-layer card (`ports`) strands instead converge on
+ * its neurons or stack and leave from them, so they run through the layer.
+ */
+function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: number, ports: Map<Card, Anchors>): THREE.LineSegments {
   const x0 = link.from.x + link.from.width / 2;
   const x1 = link.to.x - link.to.width / 2;
   const starts = strandSlots(count, link.from);
   const ends = strandSlots(count, link.to);
+  const out = ports.get(link.from)?.right;
+  const into = ports.get(link.to)?.left;
+  // Strand i takes the port at its share of the way down, so strands keep their order (dealing them
+  // out in turn wrapped the last one from the top neuron to the bottom, across the bundle).
+  const port = (ports: Point[], i: number) => ports[Math.floor((i * ports.length) / count)];
+  const start = (i: number): Point => (out ? port(out, i) : [x0, starts[i]]);
+  const end = (i: number): Point => (into ? port(into, i) : [x1, ends[i]]);
+  // Into a dense layer, every value reaches every neuron: fan each one out to
+  // a sample of them (every neuron reached), not one wire per value.
+  const pairs: [Point, Point][] = [];
+  if (into && link.to.node.type === "dense") {
+    const keep = DENSE_STRANDS / (count * into.length);
+    for (let i = 0; i < count; i += 1) {
+      for (let j = 0; j < into.length; j += 1) {
+        const diagonal = j === Math.floor((i * into.length) / count) || i === Math.floor((j * count) / into.length);
+        if (diagonal || pseudoRandom(i * 31.7 + j * 7.1) < keep) pairs.push([start(i), into[j]]);
+      }
+    }
+  } else for (let i = 0; i < count; i += 1) pairs.push([start(i), end(i)]);
   // The gradient runs across the whole system, so a strand takes the colours of the ranks it joins.
   const t0 = link.from.rank / Math.max(rankCount - 1, 1);
   const t1 = link.to.rank / Math.max(rankCount - 1, 1);
 
-  // Strands to or from a neighbour outside this level fade out towards it, off screen.
-  const alpha = (along: number) =>
-    isOutside(link.from.node) ? Math.min(1, along / OUTSIDE_FADE) : isOutside(link.to.node) ? Math.min(1, (1 - along) / OUTSIDE_FADE) : 1;
+  const alpha = (along: number) => outsideAlpha(link, along);
 
   const positions: number[] = [];
   const colours: number[] = [];
-  for (let i = 0; i < count; i += 1) {
+  pairs.forEach(([[sx, sy, sz = 0], [ex, ey, ez = 0]], i) => {
     const seed = pseudoRandom(i + link.from.rank * 7919 + link.to.y);
     const shape = { handle: 0.35 + 0.3 * pseudoRandom(seed * 1e4 + 1), bend: (pseudoRandom(seed * 1e4 + 2) - 0.5) * 2 * STRAND_BEND };
-    const points = sampleCurve(x0, starts[i], x1, ends[i], STRAND_SEGMENTS, shape);
+    const points = sampleCurve(sx, sy, ex, ey, STRAND_SEGMENTS, shape);
     for (let s = 0; s < STRAND_SEGMENTS; s += 1) {
-      for (const point of [points[s], points[s + 1]]) {
+      for (const [k, point] of [[s, points[s]], [s + 1, points[s + 1]]] as const) {
         const colour = gradientColour(theme.edgeGradient, t0 + (t1 - t0) * point.along);
-        positions.push(point.x, point.y, 0);
+        // At a layer card's stack, a strand sits at its slab's depth (see drawStack).
+        positions.push(point.x, point.y, sz + ((ez - sz) * k) / STRAND_SEGMENTS);
         colours.push(colour.r, colour.g, colour.b, alpha(point.along));
       }
     }
-  }
+  });
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 4));
   // Fewer strands get more opacity each, so a 4-value link is as visible as a 48-value one.
-  const density = Math.min(0.8, Math.max(0.2, 3 / Math.sqrt(count)));
+  const density = Math.min(0.8, Math.max(0.2, 3 / Math.sqrt(pairs.length)));
   const material = new THREE.LineBasicMaterial({
     vertexColors: true,
     transparent: true,
@@ -415,31 +482,45 @@ function buildStrands(link: CardLink, count: number, theme: Theme, rankCount: nu
   return strands;
 }
 
+/** A link to or from a neighbour outside this level fades out towards it, off screen; others are opaque. */
+function outsideAlpha(link: CardLink, along: number): number {
+  if (isOutside(link.from.node)) return Math.min(1, along / OUTSIDE_FADE);
+  if (isOutside(link.to.node)) return Math.min(1, (1 - along) / OUTSIDE_FADE);
+  return 1;
+}
+
 /** A curved ribbon from the right edge of one card to an arrowhead on the left edge of the next. */
 function buildRibbon(link: CardLink, theme: Theme): THREE.Object3D[] {
   const x0 = link.from.x + link.from.width / 2;
   const y0 = link.from.y;
   const tipX = link.to.x - link.to.width / 2;
   const y1 = link.to.y;
-  const points = sampleCurve(x0, y0, tipX - ARROW_LENGTH, y1, 32, { handle: 0.5 });
-  const material = new THREE.MeshBasicMaterial({ color: theme.panelBorderHover, transparent: true, opacity: 0.75 });
+  // To or from outside this level, it fades out towards that end, and the arrowhead goes off screen with it.
+  const toOutside = isOutside(link.to.node);
+  const points = sampleCurve(x0, y0, toOutside ? tipX : tipX - ARROW_LENGTH, y1, 32, { handle: 0.5 });
+  const material = new THREE.MeshBasicMaterial({ color: theme.panelBorderHover, transparent: true, opacity: 0.75, vertexColors: true });
 
-  const ribbon = new THREE.Mesh(ribbonGeometry(points, LINK_WIDTH), material);
+  const ribbon = new THREE.Mesh(ribbonGeometry(points, LINK_WIDTH, (along) => outsideAlpha(link, along)), material);
+  if (toOutside) {
+    ribbon.renderOrder = 2;
+    return [ribbon];
+  }
   const arrow = new THREE.Mesh(
     new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(tipX, y1, 1),
       new THREE.Vector3(tipX - ARROW_LENGTH, y1 + ARROW_WIDTH / 2, 1),
       new THREE.Vector3(tipX - ARROW_LENGTH, y1 - ARROW_WIDTH / 2, 1),
     ]),
-    material,
+    new THREE.MeshBasicMaterial({ color: theme.panelBorderHover, transparent: true, opacity: 0.75 }),
   );
   ribbon.renderOrder = arrow.renderOrder = 2;
   return [ribbon, arrow];
 }
 
-/** Two triangles per segment, offset either side of the curve by half the width. */
-function ribbonGeometry(points: { x: number; y: number }[], width: number): THREE.BufferGeometry {
+/** Two triangles per segment, offset either side of the curve by half the width; RGBA vertex colours carry `alpha`. */
+function ribbonGeometry(points: { x: number; y: number; along: number }[], width: number, alpha: (along: number) => number): THREE.BufferGeometry {
   const positions: number[] = [];
+  const colours: number[] = [];
   const indices: number[] = [];
   points.forEach((point, i) => {
     const previous = points[Math.max(i - 1, 0)];
@@ -450,6 +531,7 @@ function ribbonGeometry(points: { x: number; y: number }[], width: number): THRE
     const nx = (-dy / length) * (width / 2);
     const ny = (dx / length) * (width / 2);
     positions.push(point.x + nx, point.y + ny, 1, point.x - nx, point.y - ny, 1);
+    colours.push(1, 1, 1, alpha(point.along), 1, 1, 1, alpha(point.along));
     if (i > 0) {
       const a = (i - 1) * 2;
       indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -457,6 +539,7 @@ function ribbonGeometry(points: { x: number; y: number }[], width: number): THRE
   });
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colours, 4));
   geometry.setIndex(indices);
   return geometry;
 }

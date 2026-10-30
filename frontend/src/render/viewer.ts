@@ -25,6 +25,7 @@ export const MAX_PIXEL_RATIO = 2;
 const LOW_DETAIL_ZOOM = 0.45;
 /** Below this, overview cards show only their names: their detail lines and link chips are wider than the cards. */
 const MEDIUM_DETAIL_ZOOM = 0.8;
+
 /** After a zoom pause ends, zoom speed eases from 0 back to full over this long. */
 const ZOOM_EASE_IN_MS = 500;
 
@@ -44,8 +45,12 @@ export class Viewer {
   private zoomPausedUntil = 0;
   /** Screen space (CSS px) at the top that fitTo keeps clear, e.g. for the title card. */
   fitInsetTop: () => number = () => 0;
-  /** The same at the bottom, e.g. for the depth tree. */
+  /** The same at the bottom and on the left, e.g. for the depth tree (below a short one, beside a tall one). */
   fitInsetBottom: () => number = () => 0;
+  fitInsetLeft: () => number = () => 0;
+  /** The furthest the user can zoom out with the wheel; set from the current view's fit zoom. */
+  minZoom = MIN_ZOOM;
+
   constructor(
     private readonly container: HTMLElement,
     theme: Theme,
@@ -90,47 +95,36 @@ export class Viewer {
 
   /** Centre `bounds` in the view below fitInsetTop() and zoom so they fill most of it. */
   fitTo(bounds: Bounds, margin = 0.88): void {
-    this.flight = null;
     this.place(this.fitTarget(bounds, margin));
   }
 
-  /**
-   * Like fitTo, but glide there over `milliseconds` (eased, zooming at an even
-   * rate on a log scale). It is a short, finite animation, so the viewer is
-   * idle again as soon as it lands. Returns the zoom it lands on.
-   */
-  flyTo(bounds: Bounds, milliseconds: number, margin = 0.88): number {
-    const from = { zoom: this.camera.zoom, x: this.camera.position.x, y: this.camera.position.y };
-    const to = this.fitTarget(bounds, margin);
-    const started = performance.now();
-    const flight = () => {
-      if (this.flight !== flight) return; // replaced by another fit or flight
-      const t = Math.min(1, (performance.now() - started) / milliseconds);
-      const eased = 1 - (1 - t) ** 3;
-      this.place({
-        zoom: from.zoom * (to.zoom / from.zoom) ** eased,
-        x: from.x + (to.x - from.x) * eased,
-        y: from.y + (to.y - from.y) * eased,
-      });
-      if (t < 1) requestAnimationFrame(flight);
-      else this.flight = null;
+  /** Where `bounds` are on screen now: centre (CSS px from the middle of the view, y up) and size. */
+  screenRect(bounds: Bounds): { x: number; y: number; width: number; height: number } {
+    const zoom = this.camera.zoom;
+    return {
+      x: ((bounds.left + bounds.right) / 2 - this.camera.position.x) * zoom,
+      y: ((bounds.top + bounds.bottom) / 2 - this.camera.position.y) * zoom,
+      width: (bounds.right - bounds.left) * zoom,
+      height: (bounds.top - bounds.bottom) * zoom,
     };
-    this.flight = flight;
-    requestAnimationFrame(flight);
-    return to.zoom;
   }
 
-  private flight: (() => void) | null = null;
+  /** Place the camera so `bounds` fit inside `rect` (as from screenRect), centred on it. */
+  frameIn(bounds: Bounds, rect: { x: number; y: number; width: number; height: number }): void {
+    const zoom = clamp(Math.min(rect.width / Math.max(bounds.right - bounds.left, 1), rect.height / Math.max(bounds.top - bounds.bottom, 1)), MIN_ZOOM, MAX_ZOOM);
+    this.place({ zoom, x: (bounds.left + bounds.right) / 2 - rect.x / zoom, y: (bounds.top + bounds.bottom) / 2 - rect.y / zoom });
+  }
 
   private fitTarget(bounds: Bounds, margin: number): { zoom: number; x: number; y: number } {
     const { width, height } = this.size();
     const top = Math.min(this.fitInsetTop(), height / 3);
     const bottom = Math.min(this.fitInsetBottom(), height / 4);
+    const left = Math.min(this.fitInsetLeft(), width / 3);
     const boundsWidth = Math.max(bounds.right - bounds.left, 1);
     const boundsHeight = Math.max(bounds.top - bounds.bottom, 1);
-    const zoom = clamp(Math.min(width / boundsWidth, (height - top - bottom) / boundsHeight) * margin, MIN_ZOOM, MAX_ZOOM);
+    const zoom = clamp(Math.min((width - left) / boundsWidth, (height - top - bottom) / boundsHeight) * margin, MIN_ZOOM, MAX_ZOOM);
     // Shift the camera so the bounds centre on the space between the insets.
-    return { zoom, x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 + (top - bottom) / 2 / zoom };
+    return { zoom, x: (bounds.left + bounds.right) / 2 - left / 2 / zoom, y: (bounds.top + bounds.bottom) / 2 + (top - bottom) / 2 / zoom };
   }
 
   private place({ zoom, x, y }: { zoom: number; x: number; y: number }): void {
@@ -223,7 +217,9 @@ export class Viewer {
         if (strength === 0) return;
         // Zoom towards the cursor: keep the world point under it fixed.
         const before = this.toWorld(event.clientX, event.clientY);
-        this.camera.zoom = clamp(this.camera.zoom * Math.exp(-event.deltaY * 0.0015 * strength), MIN_ZOOM, MAX_ZOOM);
+        const zoom = clamp(this.camera.zoom * Math.exp(-event.deltaY * 0.0015 * strength), this.minZoom, MAX_ZOOM);
+        if (zoom === this.camera.zoom) return; // at a limit: don't drift the view
+        this.camera.zoom = zoom;
         this.camera.updateProjectionMatrix();
         const after = this.toWorld(event.clientX, event.clientY);
         this.camera.position.x += before.x - after.x;
