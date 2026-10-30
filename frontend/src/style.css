@@ -1864,10 +1864,13 @@ button.depth-row:hover {
 }
 
 .chart-cell-text {
-  fill: var(--surface);
+  fill: var(--text-1);
   font-family: var(--mono);
-  font-size: 9px;
-  mix-blend-mode: difference;
+  font-size: 10px;
+}
+
+.chart-cell-text.is-on-light {
+  fill: var(--surface);
 }
 
 .drawer-hidden {

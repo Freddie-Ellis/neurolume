@@ -223,7 +223,8 @@ class Session:
 
         ``split="val"`` records them as ``loss/val``, drawn on one chart with the
         training ``loss``, and compared with it (the gap, overfitting). In a
-        System, ``network="critic"`` records ``loss/critic``.
+        System, ``network="critic"`` records ``loss/critic`` (its own chart, as
+        networks' losses can be far apart in scale).
         """
         suffix = "".join(f"/{part}" for part in (network, split) if part)
         # .item() reads a tensor without autograd's warning about tensors that still need grad.
@@ -322,7 +323,7 @@ def watch(
     can switch it in the viewer, which remembers your choice per model.
     ``pinned`` metrics sit beside it, and ``charts`` sets the metrics drawer's
     charts (a name, or a list of names drawn together); other metrics get a
-    chart each, grouped by the prefix before ``/``. Choices made in the viewer
+    chart each, sharing it with their own splits (``loss`` with ``loss/val``). Choices made in the viewer
     win. ``every_seconds`` is how often ``log()`` reads the weights, gradients
     and layer stats; call ``log()`` after ``backward()`` so it sees gradients.
     """
@@ -372,7 +373,10 @@ def _model_sampler(model: Any, graph: Graph, sample: Any) -> Callable[[int], dic
                 reading = read(step)
                 for key in ("weights", "gradients"):
                     merged[key].update({f"{name}{SEPARATOR}{node_id}": value for node_id, value in reading[key].items()})
-                merged["stats"][name] = next(iter(reading["stats"].values()))
+                if isinstance(model._models[name][0], System):  # a System inside: each of its networks, as "detector/encoder"
+                    merged["stats"].update({f"{name}{SEPARATOR}{inner}": stats for inner, stats in reading["stats"].items()})
+                else:  # one model: its stats come keyed by the model's own name
+                    merged["stats"][name] = next(iter(reading["stats"].values()))
             return merged
 
         return read_all if parts else None

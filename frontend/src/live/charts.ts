@@ -187,8 +187,10 @@ export function confusionChart(matrix: number[][], width: number, height: number
       const total = row.reduce((a, b) => a + b, 0) || 1;
       return row.map((count, p) => {
         const [cx, cy] = [PAD.left + p * size, PAD.top + t * size];
-        const text = labelled && count > 0 ? `<text class="chart-cell-text" x="${(cx + size / 2).toFixed(1)}" y="${(cy + size / 2 + 3).toFixed(1)}" text-anchor="middle">${count}</text>` : "";
-        return `<rect class="chart-cell${t === p ? " is-diagonal" : ""}" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" width="${(size - 1).toFixed(1)}" height="${(size - 1).toFixed(1)}" fill-opacity="${(0.08 + 0.92 * (count / total)).toFixed(2)}"/>${text}`;
+        const share = 0.08 + 0.92 * (count / total);
+        // Counts in the background colour on bright cells, in ink on dark ones.
+        const text = labelled && count > 0 ? `<text class="chart-cell-text${share > 0.5 ? " is-on-light" : ""}" x="${(cx + size / 2).toFixed(1)}" y="${(cy + size / 2 + 3).toFixed(1)}" text-anchor="middle">${count}</text>` : "";
+        return `<rect class="chart-cell${t === p ? " is-diagonal" : ""}" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" width="${(size - 1).toFixed(1)}" height="${(size - 1).toFixed(1)}" fill-opacity="${share.toFixed(2)}"/>${text}`;
       });
     })
     .join("");

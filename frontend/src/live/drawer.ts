@@ -7,8 +7,8 @@
  * - predictions vs truth from `Session.predictions()`: a scatter with R² and
  *   mean error, or a confusion matrix for classes;
  * - one chart per metric or group: charts come from `watch(charts=...)`, then
- *   every other metric gets one, grouped by the prefix before "/" ("loss" and
- *   "loss/val" share a chart). Charts can be log-scaled, reordered, hidden,
+ *   every other metric gets one, together with its own splits ("loss" with
+ *   "loss/val", "loss/critic" with "loss/critic/val"; see `chartGroup`). Charts can be log-scaled, reordered, hidden,
  *   combined and pinned to the strip, with one smoothing for all, saved per
  *   model (localStorage); "Reset layout" goes back to the defaults. Hovering
  *   reads off the values;
@@ -62,7 +62,7 @@ const chartKey = (chart: ChartSpec) => chart.metrics.join(" + ");
 /**
  * The charts to draw: the saved ones (or else those from code), keeping only
  * metrics that exist, then a chart for every metric not on one yet, grouped by
- * the prefix before "/", in the order metrics first appeared.
+ * `chartGroup`, in the order metrics first appeared.
  */
 export function deriveCharts(names: string[], fromCode: string[][], saved: ChartSpec[] | undefined): ChartSpec[] {
   const known = new Set(names);
@@ -73,10 +73,19 @@ export function deriveCharts(names: string[], fromCode: string[][], saved: Chart
   const groups = new Map<string, string[]>();
   for (const name of names) {
     if (placed.has(name)) continue;
-    const group = name.includes("/") ? name.slice(0, name.indexOf("/")) : name;
-    groups.set(group, [...(groups.get(group) ?? []), name]);
+    groups.set(chartGroup(name), [...(groups.get(chartGroup(name)) ?? []), name]);
   }
   return [...charts, ...[...groups.values()].map((metrics) => ({ metrics, log: false }))];
+}
+
+/**
+ * Which chart a metric goes on by default: its name without a split at the
+ * end, so a metric shares a chart with its own validation (or test) line,
+ * but different networks' losses ("loss/actor", "loss/critic") don't, as
+ * their scales can be far apart.
+ */
+export function chartGroup(name: string): string {
+  return name.replace(/\/(train|training|val|valid|validation|test)$/, "");
 }
 
 export class Drawer {

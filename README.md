@@ -1,6 +1,6 @@
 # Neurolume
 
-**See your PyTorch and Keras models as interactive diagrams, and watch them train.**
+**See your PyTorch and Keras models as interactive diagrams, and watch them train... (If it's working)**
 
 Neurolume runs your model once to learn its shape, then opens an interactive
 viewer in the browser: every layer as a panel, every dense connection as a
@@ -142,7 +142,7 @@ display = plant.block("display", label="Operator screen", input_shape=[784])
 plant.connect(camera, denoiser, label="frames")
 plant.connect(denoiser, display, label="clean frames")
 plant.connect(sensors, detector, label="readings")
-plant.connect(detector, alarm, label="fault type")
+plant.connect(detector, alarm, label="fault type", from_="prediction")  # the detector has two outputs
 
 neurolume.show(plant)
 ```
@@ -160,7 +160,7 @@ A single PyTorch module that keeps its parts in attributes (`self.encoder`,
 
 Run it: [`examples/nested_system.py`](examples/nested_system.py).
 
-## Watching a model train
+## Watching a model train (beta)
 
 Swap `show` for `watch` and log as you go:
 
@@ -204,12 +204,14 @@ it again later.
 maps are kept under 2%.
 
 - **Keras:** `model.fit(x, y, callbacks=[neurolume.keras.Live(x[:64], validation=(x_val, y_val))])`.
-- **Systems:** `neurolume.watch(system)` follows every network;
-  `live.log(step, network="critic", loss=...)` logs per network.
+- **Systems:** `neurolume.watch(system)` follows every network, nested ones
+  included; `live.log(step, network="critic", loss=...)` logs per network.
 
 Run it: [`examples/live_training.py`](examples/live_training.py) (a small
 model that overfits on purpose), [`examples/live_resnet.py`](examples/live_resnet.py)
-(ResNet-18 with live feature maps), [`examples/keras_live.py`](examples/keras_live.py).
+(ResNet-18 with live feature maps), [`examples/live_nested_system.py`](examples/live_nested_system.py)
+(example 3's plant monitor, every network training at once),
+[`examples/keras_live.py`](examples/keras_live.py).
 
 ## Sharing: a standalone HTML file
 

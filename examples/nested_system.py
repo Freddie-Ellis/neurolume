@@ -31,7 +31,7 @@ def build_nested_system() -> neurolume.System:
     plant.connect(camera, denoiser, label="frames")
     plant.connect(denoiser, display, label="clean frames")
     plant.connect(sensors, detector, label="readings")
-    plant.connect(detector, alarm, label="fault type")
+    plant.connect(detector, alarm, label="fault type", from_="prediction")
     return plant
 
 

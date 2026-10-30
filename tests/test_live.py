@@ -231,3 +231,22 @@ def test_systems_read_every_network_and_log_per_network() -> None:
     assert [point.values for point in session.run.points] == [{"loss/critic": 0.5}, {"reward": 1.0}]
     assert set(session.run.snapshots[0].layers) == set(graph_weights) == {"actor/0", "actor/2", "critic/0"}
     assert set(session.run.stats[0].networks) == {"actor", "critic"}
+
+
+def test_nested_systems_keep_every_inner_network() -> None:
+    torch = pytest.importorskip("torch")
+    inner = neurolume.System("Detector")
+    encoder = inner.add("encoder", torch.nn.Sequential(torch.nn.Linear(4, 3)), (4,))
+    head = inner.add("head", torch.nn.Sequential(torch.nn.Linear(3, 2)), (3,))
+    inner.connect(encoder, head)
+    outer = neurolume.System("Plant")
+    outer.add("camera_net", torch.nn.Sequential(torch.nn.Linear(6, 2)), (6,))
+    outer.add("detector", inner)
+    session = neurolume.watch(outer, open_browser=False)
+    try:
+        session.log(0, network="detector", loss=1.0)
+        graph_weights = set(session.run.graph.weights)
+    finally:
+        session.stop()
+    assert set(session.run.stats[0].networks) == {"camera_net", "detector/encoder", "detector/head"}
+    assert set(session.run.snapshots[0].layers) == graph_weights == {"camera_net/0", "detector/encoder/0", "detector/head/0"}

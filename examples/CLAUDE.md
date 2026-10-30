@@ -12,6 +12,7 @@ Runnable scripts the user opens and edits often; keep them short and readable
 | `keras_mlp.py` | The MLP in Keras (`build_mlp()`); must match `mlp.py` |
 | `system.py` | `System` builder: sensor → encoder → decoder/classifier, plus blocks (`build_system()` is imported by tests) |
 | `live_training.py` | `neurolume.watch()` on a small regression MLP that overfits 200 noisy examples on purpose (validation turns up around step 6,000): `split="val"`, `predictions()` scatter, the Training panel's verdict |
+| `live_nested_system.py` | The plant monitor of `nested_system.py` trained live (it builds its own copy around networks it holds, since `build_system()` keeps its models inside): denoiser + fault-detector System, `network=` and `split=` logging per network, confusion matrix; ~25 s |
 | `live_resnet.py` | torchvision ResNet-18 trained live on a toy task (which way up a noisy, shifted 7 is; no download): live feature maps, `loss/val`, confusion matrix, timeline. Needs torchvision |
 | `keras_live.py` | The Keras MLP trained live with `neurolume.keras.Live` (synthetic 28x28 data, validation split) |
 | `qt_live.py` | A Qt training logger: Start/Stop and a step readout beside `NeurolumeWidget.watch()`, training `live_training.py`'s regression model on a background thread (the panel polls with a QTimer). Needs qtpy + PySide6 |
