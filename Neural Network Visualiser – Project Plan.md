@@ -225,14 +225,13 @@ _Status (29 Oct 2026):_ passes. `examples/cnn.py` (PyTorch) and `examples/keras_
 
 _Status (29 Oct 2026):_ passes. `examples/resnet.py` opens as Input → stem → layer1–4 → head → Output; each stage opens to its two blocks and each block to its layers, with the skip connection (and layer2–4's downsample path) drawn as arcs (checked by screenshot; group tree asserted in `tests/test_torch_adapter.py`). Keras nested models (`examples/keras_resnet.py`) behave the same, feature maps included. Known gaps: a Keras block built with `keras.Input((None, None, C))` has unknown sizes; flat Keras applications (e.g. `keras.applications.ResNet50`) are not grouped, since their blocks are only name prefixes.
 
-### Phase 4 – Teaching and presentation features
+### Phase 4 – Export
 
-- [ ] Presentation mode: full screen, hides UI, arrow keys step layer by layer with a camera fly-to.
-- [ ] Forward-pass visual: **revised.** A continuous edge animation ("flow") was built and removed because it kept the GPU busy on integrated graphics. If added back, it must be triggered (e.g. one pass per key press in presentation mode) and stop when finished, so the viewer stays idle otherwise.
-- [ ] Shape labels on edges and an "explain this layer" side panel with short plain-English text per layer type.
-- [ ] Export: PNG at 2x and 4x, and `export_html()` standalone file (the frontend already reads `window.__NEUROLUME_GRAPH__` for this).
+**Revised:** the teaching features (presentation mode, a forward-pass animation, an "explain this layer" panel) and PNG export were dropped. The viewer as it is already works for presenting, so this phase is only about getting it out of Python.
 
-**Done when:** a lecture can be given from the viewer with keyboard only, and the exported HTML works offline from a USB stick.
+- [ ] `export_html()`: one standalone file (the frontend already reads `window.__NEUROLUME_GRAPH__` for this).
+
+**Done when:** the exported HTML works offline from a USB stick.
 
 ### Phase 5 – Live training and Qt integration
 
