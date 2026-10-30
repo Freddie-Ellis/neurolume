@@ -1,5 +1,9 @@
 # Neurolume
 
+[![PyPI](https://img.shields.io/pypi/v/neurolume)](https://pypi.org/project/neurolume/)
+[![Python](https://img.shields.io/pypi/pyversions/neurolume)](https://pypi.org/project/neurolume/)
+[![Licence: MIT](https://img.shields.io/pypi/l/neurolume)](https://github.com/Freddie-Ellis/neurolume/blob/main/LICENSE)
+
 **See your PyTorch and Keras models as interactive diagrams, and watch them train... (If it's working)**
 
 Neurolume runs your model once to learn its shape, then opens an interactive
@@ -74,7 +78,7 @@ layers and how they connect, so a PyTorch model needs a `forward` (or must be
 an `nn.Sequential`). Keras models that start with `keras.Input` don't need a
 sample at all.
 
-Run it: [`examples/mlp.py`](examples/mlp.py).
+Run it: [`examples/mlp.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/mlp.py).
 
 ## Example 2: a system of networks
 
@@ -119,7 +123,7 @@ links between them. Click a card (or zoom into it) to open its layers; press
 `Esc` or zoom out to go back. Blocks can carry Markdown notes with LaTeX maths
 (`notes=...`), shown when you click them.
 
-Run it: [`examples/system.py`](examples/system.py).
+Run it: [`examples/system.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/system.py).
 
 ## Example 3: systems inside systems
 
@@ -158,7 +162,7 @@ A single PyTorch module that keeps its parts in attributes (`self.encoder`,
 `self.decoder`) is split into networks like this automatically. Pass
 `group_submodules=False` to `show` to keep it as one network.
 
-Run it: [`examples/nested_system.py`](examples/nested_system.py).
+Run it: [`examples/nested_system.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/nested_system.py).
 
 ## Watching a model train (beta)
 
@@ -207,11 +211,11 @@ maps are kept under 2%.
 - **Systems:** `neurolume.watch(system)` follows every network, nested ones
   included; `live.log(step, network="critic", loss=...)` logs per network.
 
-Run it: [`examples/live_training.py`](examples/live_training.py) (a small
-model that overfits on purpose), [`examples/live_resnet.py`](examples/live_resnet.py)
-(ResNet-18 with live feature maps), [`examples/live_nested_system.py`](examples/live_nested_system.py)
+Run it: [`examples/live_training.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/live_training.py) (a small
+model that overfits on purpose), [`examples/live_resnet.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/live_resnet.py)
+(ResNet-18 with live feature maps), [`examples/live_nested_system.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/live_nested_system.py)
 (example 3's plant monitor, every network training at once),
-[`examples/keras_live.py`](examples/keras_live.py).
+[`examples/keras_live.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/keras_live.py).
 
 ## Sharing: a standalone HTML file
 
@@ -236,8 +240,8 @@ session = widget.watch(model, sample)       # or show a live run, and log() to i
 
 A `QWebEngineView` with the same viewer, for your own tools and training
 loggers. Needs `pip install "neurolume[qt]" PySide6`. See
-[`examples/qt_widget.py`](examples/qt_widget.py) and
-[`examples/qt_live.py`](examples/qt_live.py) (a logger with Start/Stop, training
+[`examples/qt_widget.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/qt_widget.py) and
+[`examples/qt_live.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/qt_live.py) (a logger with Start/Stop, training
 on a background thread).
 
 ## Viewer controls
@@ -282,8 +286,8 @@ changing it, rebuild it into the Python package with
 The JSON schema in `python/neurolume/schema.py` is the contract between
 Python and the viewer: after changing it, bump `SCHEMA_VERSION` and run
 `python scripts/generate_schema_ts.py`. The roadmap is
-[`docs/project-plan.md`](docs/project-plan.md).
+[`docs/project-plan.md`](https://github.com/Freddie-Ellis/neurolume/blob/main/docs/project-plan.md).
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/Freddie-Ellis/neurolume/blob/main/LICENSE).

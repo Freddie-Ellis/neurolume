@@ -23,6 +23,7 @@ More detail lives next to the code:
   dead. Prefer a small edit to a new function, and a new function to a new module.
 - README images are `docs/images/*.png` (headless Edge, 1600x900, dark), linked by absolute
   raw.githubusercontent.com URLs so they show on PyPI; retake them when the look changes.
+  Links to repo files are absolute `github.com/.../blob/main/` URLs for the same reason.
 - Keep the CLAUDE.md files current when behaviour or structure changes (one or
   two lines, in the right file); they are what the next session reads.
 
