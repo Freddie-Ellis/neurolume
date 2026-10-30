@@ -244,6 +244,8 @@ _Status (29 Oct 2026):_ passes. `examples/resnet.py` opens as Input → stem →
 
 ### Phase 6 (stretch) – Transformers
 
+Design sketch: [`docs/transformer-sketch.html`](docs/transformer-sketch.html) (open in a browser). The user liked it: one lane per token through the overview; inside a block, attention heads as a stack of slabs with the front one showing its matrix, a per-token feed-forward whose lanes widen and narrow without crossing, and skip arcs into adds as in ResNet; clicking a head shows its attention matrix and the same row as arcs over the sentence.
+
 - [ ] Attention blocks as grouped heads with an attention-matrix view.
 - [ ] Embedding and token-flow visualisation.
 

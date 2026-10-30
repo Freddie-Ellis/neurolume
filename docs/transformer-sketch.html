@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transformer in Neurolume</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: a stack of wide schematic "screens", each a canvas drawn like the viewer, with a short caption. Single dark look, matching the viewer's dark theme. */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0d;
+    --panel: #14141a;
+    --border: #2a2a34;
+    --text: #ebe9f2;
+    --text-2: #8f8b9e;
+    --accent: #f2667a;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    padding-block: 32px 64px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 1232px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+  header { display: flex; flex-direction: column; gap: 8px; max-width: 68ch; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); margin: 0; }
+  h1 { font-size: 30px; font-weight: 600; line-height: 1.15; margin: 0; text-wrap: balance; }
+  header p { margin: 0; color: var(--text-2); }
+  section { display: flex; flex-direction: column; gap: 12px; }
+  h2 { font-size: 17px; font-weight: 600; margin: 0; display: flex; gap: 10px; align-items: baseline; }
+  h2 .level { font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+  .screen { overflow-x: auto; border: 1px solid var(--border); border-radius: 2px; background: var(--bg); }
+  canvas { display: block; }
+  .caption { color: var(--text-2); max-width: 75ch; margin: 0; }
+  .caption strong { color: var(--text); font-weight: 500; }
+</style>
+
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Sketch · not built · Phase 6</p>
+    <h1>A transformer in Neurolume</h1>
+    <p>How a small GPT-style model could look in the viewer, reading the sentence <em>"the cat sat because it was tired"</em>. Three levels, opened the same way as today: the overview, one block, one attention head.</p>
+  </header>
+
+  <section>
+    <h2><span class="level">Level 1</span>Overview</h2>
+    <div class="screen"><canvas id="overview"></canvas></div>
+    <p class="caption">Each word is a <strong>token</strong> and gets its own lane, so the sentence flows through as 7 parallel bundles instead of one signal. The embedding turns each token into a vector. Every block card previews its attention pattern (top) and its per-token MLP (bottom). At the end, only the last token's lane goes on to predict the next word.</p>
+  </section>
+
+  <section>
+    <h2><span class="level">Level 2</span>Inside block 3</h2>
+    <div class="screen"><canvas id="block"></canvas></div>
+    <p class="caption"><strong>Attention</strong> is the only place tokens mix: its stack of 8 squares is the 8 heads, like a conv's slabs, and the front one shows who looks at whom. The <strong>feed-forward</strong> part works on each token on its own, so the lanes widen (512 → 2048) and narrow again without crossing. Both parts have a skip connection into an add, drawn as arcs exactly like a ResNet block.</p>
+  </section>
+
+  <section>
+    <h2><span class="level">Level 3</span>Head 3 of block 3</h2>
+    <div class="screen"><canvas id="head"></canvas></div>
+    <p class="caption">Clicking a head opens its <strong>attention matrix</strong> for the real input: each row is a token looking at the others, each column a token being looked at, and every row adds up to 1. This head has learned to link pronouns back to nouns: <strong>"it"</strong> puts 0.71 of its attention on <strong>"cat"</strong>. The grey triangle is masked: a GPT-style model can only look at earlier words.</p>
+  </section>
+</main>
+
+<script>
+const C = { bg: "#0a0a0d", panel: "#14141a", border: "#2a2a34", grid: "#22222b", text: "#ebe9f2", dim: "#8f8b9e", node: "#f4f2fa" };
+const STOPS = ["#f7a24b", "#f2667a", "#c063e0", "#7a6df2"];
+const SANS = '"IBM Plex Sans", system-ui, sans-serif';
+const MONO = '"IBM Plex Mono", ui-monospace, monospace';
+const TOKENS = ["the", "cat", "sat", "because", "it", "was", "tired"];
+// Head 3's attention: row = token looking, column = token looked at (causal, rows sum to 1).
+const ATTENTION = [
+  [1],
+  [0.35, 0.65],
+  [0.1, 0.6, 0.3],
+  [0.05, 0.2, 0.35, 0.4],
+  [0.03, 0.71, 0.04, 0.08, 0.14],
+  [0.02, 0.3, 0.05, 0.03, 0.45, 0.15],
+  [0.02, 0.25, 0.03, 0.05, 0.4, 0.15, 0.1],
+];
+
+function hex(h) { return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); }
+function grad(t, alpha = 1) {
+  const s = Math.min(Math.max(t, 0), 1) * (STOPS.length - 1);
+  const i = Math.min(Math.floor(s), STOPS.length - 2);
+  const [a, b] = [hex(STOPS[i]), hex(STOPS[i + 1])];
+  const c = a.map((v, k) => Math.round(v + (b[k] - v) * (s - i)));
+  return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+function random(seed) {
+  let s = seed % 2147483647 || 1;
+  return () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646;
+}
+
+function setup(id, w, h) {
+  const canvas = document.getElementById(id);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, "#0d0d11");
+  g.addColorStop(1, "#060608");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  return ctx;
+}
+
+function panel(ctx, x, y, w, h, title, sub) {
+  ctx.fillStyle = C.panel;
+  ctx.globalAlpha = 0.85;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = C.border;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.fillStyle = C.text;
+  ctx.font = `600 13px ${SANS}`;
+  ctx.fillText(title, x + 12, y + 22);
+  if (sub) {
+    ctx.fillStyle = C.dim;
+    ctx.font = `400 11px ${SANS}`;
+    ctx.fillText(sub, x + 12, y + 38);
+  }
+}
+
+function chip(ctx, x, y, text, centre = true) {
+  ctx.font = `500 10px ${MONO}`;
+  const label = text.toUpperCase();
+  const w = ctx.measureText(label).width + 14;
+  const left = centre ? x - w / 2 : x;
+  ctx.fillStyle = "#0e0e12";
+  ctx.fillRect(left, y - 9, w, 18);
+  ctx.strokeStyle = C.border;
+  ctx.strokeRect(left + 0.5, y - 8.5, w - 1, 17);
+  ctx.fillStyle = C.text;
+  ctx.fillText(label, left + 7, y + 3.5);
+}
+
+function dashed(ctx, x, y0, y1) {
+  ctx.save();
+  ctx.strokeStyle = C.border;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x + 0.5, y0);
+  ctx.lineTo(x + 0.5, y1);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A faint organic strand from (x0, y0) to (x1, y1), like the viewer's edges. */
+function strand(ctx, x0, y0, x1, y1, colour, bend = 0, width = 0.8) {
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  const dx = (x1 - x0) * 0.45;
+  ctx.bezierCurveTo(x0 + dx, y0 + bend, x1 - dx, y1 + bend, x1, y1);
+  ctx.stroke();
+}
+
+/** A bundle of `n` strands between two points, spread a little at each end. */
+function bundle(ctx, x0, y0, x1, y1, t, n, rnd, spread0 = 6, spread1 = 6, alpha = 0.35) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let k = 0; k < n; k += 1) {
+    const a = (rnd() - 0.5) * spread0;
+    const b = (rnd() - 0.5) * spread1;
+    strand(ctx, x0, y0 + a, x1, y1 + b, grad(t, alpha * (0.5 + rnd() * 0.5)), (rnd() - 0.5) * 14);
+  }
+  ctx.restore();
+}
+
+function dot(ctx, x, y, r = 2.6) {
+  ctx.save();
+  ctx.shadowColor = "rgba(255,255,255,0.6)";
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = C.node;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** A token's vector: a short row of shaded cells (a few of its 512 numbers). */
+function vector(ctx, x, y, t, seed, cells = 10, size = 7) {
+  const rnd = random(seed);
+  for (let k = 0; k < cells; k += 1) {
+    ctx.fillStyle = grad(t, 0.15 + rnd() * 0.85);
+    ctx.fillRect(x + k * (size + 1), y - size / 2, size, size);
+  }
+  ctx.strokeStyle = grad(t, 0.6);
+  ctx.strokeRect(x - 1.5, y - size / 2 - 1.5, cells * (size + 1) + 2, size + 3);
+}
+
+function mergeNode(ctx, x, y, glyph = "+") {
+  ctx.save();
+  ctx.shadowColor = "rgba(242,102,122,0.7)";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = "#0b0b0e";
+  ctx.beginPath();
+  ctx.arc(x, y, 10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = C.text;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(x, y, 10, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = C.text;
+  ctx.font = `500 13px ${MONO}`;
+  ctx.textAlign = "center";
+  ctx.fillText(glyph, x, y + 4.5);
+  ctx.font = `500 9px ${MONO}`;
+  ctx.fillStyle = C.dim;
+  ctx.fillText("ADD", x, y - 17);
+  ctx.textAlign = "left";
+  ctx.beginPath();
+  ctx.moveTo(x + 13, y - 4);
+  ctx.lineTo(x + 19, y);
+  ctx.lineTo(x + 13, y + 4);
+  ctx.fillStyle = C.dim;
+  ctx.fill();
+}
+
+/** A head's attention as a heatmap; `size` is the side of one cell. */
+function heatmap(ctx, x, y, size, t = 0.55, gap = 1) {
+  ATTENTION.forEach((row, i) => {
+    for (let j = 0; j < TOKENS.length; j += 1) {
+      const value = row[j];
+      ctx.fillStyle = value === undefined ? "#18181f" : grad(t, 0.08 + value * 0.92);
+      ctx.fillRect(x + j * size, y + i * size, size - gap, size - gap);
+    }
+  });
+}
+
+/** A skip arc: strands dipping under the panels from (x0, y0) to (x1, y1). */
+function skipArc(ctx, x0, y0, x1, y1, lane, t, seed) {
+  const rnd = random(seed);
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let k = 0; k < 26; k += 1) {
+    const jitter = (rnd() - 0.5) * 16;
+    ctx.strokeStyle = grad(t, 0.18 + rnd() * 0.22);
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x0 + (rnd() - 0.5) * 30, y0);
+    ctx.bezierCurveTo(x0 - 10, lane + jitter, x0 + 60, lane + jitter, (x0 + x1) / 2, lane + jitter);
+    ctx.bezierCurveTo(x1 - 60, lane + jitter, x1 - 26, lane - 40, x1 + (rnd() - 0.5) * 4, y1 + 9);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawOverview() {
+  const ctx = setup("overview", 1200, 400);
+  const ys = TOKENS.map((_, i) => 200 + (i - 3) * 34);
+  const rnd = random(7);
+
+  // Tokens in, as chips.
+  TOKENS.forEach((token, i) => chip(ctx, 24, ys[i], token, false));
+
+  panel(ctx, 120, 50, 150, 300, "Embedding", "7 tokens × 512");
+  ys.forEach((y, i) => {
+    bundle(ctx, 24 + 60, y, 140, y, 0, 3, rnd, 2, 2, 0.5);
+    vector(ctx, 142, y, 0.05, 11 + i);
+  });
+
+  const blocks = [
+    { x: 330, title: "Block 1", t: 0.2 },
+    { x: 500, title: "Block 2", t: 0.35 },
+    { x: 740, title: "Block 12", t: 0.8 },
+  ];
+  let fromX = 270;
+  blocks.forEach((block, b) => {
+    // Lanes into the block: one bundle per token, staying in its own lane.
+    ys.forEach((y) => bundle(ctx, fromX, y, block.x, y, block.t - 0.1, 6, rnd, 8, 8));
+    panel(ctx, block.x, 70, 140, 260, block.title, "attention · MLP");
+    // Preview: the attention pattern, then the MLP as parallel lanes.
+    heatmap(ctx, block.x + 18, 110, 9, block.t);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 7; i += 1) {
+      const y = 205 + i * 15;
+      ctx.strokeStyle = grad(block.t, 0.55);
+      ctx.beginPath();
+      ctx.moveTo(block.x + 18, y);
+      ctx.bezierCurveTo(block.x + 50, y - 5, block.x + 70, y + 5, block.x + 122, y);
+      ctx.stroke();
+      dot(ctx, block.x + 18, y, 1.8);
+      dot(ctx, block.x + 122, y, 1.8);
+    }
+    ctx.restore();
+    fromX = block.x + 140;
+    if (b === 1) {
+      ys.forEach((y) => bundle(ctx, fromX, y, 690, y, 0.5, 4, rnd, 8, 4, 0.25));
+      ctx.fillStyle = C.dim;
+      ctx.font = `500 12px ${MONO}`;
+      ctx.fillText("⋯ 9 more", 680, 362);
+      fromX = 690;
+    }
+  });
+
+  // LM head: every token gets scores over the vocabulary; only the last one is used to predict.
+  panel(ctx, 930, 70, 110, 260, "LM head", "512 → 50,257");
+  ys.forEach((y, i) => bundle(ctx, 880, y, 985, 120 + i * 30, 0.88, 5, rnd, 8, 2, i === 6 ? 0.55 : 0.18));
+  for (let k = 0; k < 7; k += 1) dot(ctx, 985, 120 + k * 30);
+  ctx.fillStyle = C.dim;
+  ctx.font = `400 14px ${MONO}`;
+  ctx.fillText("⋮", 981, 112);
+
+  panel(ctx, 1060, 70, 125, 260, "Next token", "after \"tired\"");
+  const next = [[".", 0.38], ["and", 0.21], ["so", 0.09], [",", 0.07], ["of", 0.04]];
+  bundle(ctx, 985, 300, 1072, 130, 1, 8, rnd, 2, 30, 0.5);
+  next.forEach(([word, p], k) => {
+    const y = 120 + k * 34;
+    ctx.fillStyle = grad(1, 0.25 + p * 1.6);
+    ctx.fillRect(1072, y - 6, p * 180, 12);
+    ctx.fillStyle = C.text;
+    ctx.font = `500 11px ${MONO}`;
+    ctx.fillText(`${word}`, 1072, y + 20);
+    ctx.fillStyle = C.dim;
+    ctx.fillText(p.toFixed(2), 1140, y + 20);
+  });
+}
+
+function drawBlock() {
+  const ctx = setup("block", 1200, 520);
+  const ys = TOKENS.map((_, i) => 210 + (i - 3) * 36);
+  const rnd = random(23);
+  const top = 50;
+  const height = 340;
+
+  // Skip arcs first, under everything (lane nearest the panels for the shorter one).
+  skipArc(ctx, 115, ys[6] + 14, 530, 210, 455, 0.45, 5);
+  skipArc(ctx, 545, 222, 965, 210, 425, 0.75, 9);
+
+  panel(ctx, 40, top, 150, height, "Input", "from block 2 · 7 × 512");
+  ys.forEach((y, i) => {
+    vector(ctx, 70, y, 0.3, 40 + i);
+    ctx.fillStyle = C.dim;
+    ctx.font = `400 10px ${MONO}`;
+    ctx.fillText(TOKENS[i], 70, y + 15);
+  });
+
+  // LayerNorm band, then attention.
+  dashed(ctx, 215, top + 20, top + height - 20);
+  chip(ctx, 215, 210, "LayerNorm");
+
+  panel(ctx, 240, top, 260, height, "Self-attention", "8 heads · each 7 × 7");
+  // Heads as a stack of slabs, the front one showing head 3's pattern.
+  const side = 126;
+  const fx = 300;
+  const fy = 210 - side / 2 + 10;
+  for (let h = 7; h >= 1; h -= 1) {
+    const ox = fx + h * 7;
+    const oy = fy - h * 7;
+    ctx.fillStyle = C.panel;
+    ctx.fillRect(ox, oy, side, side);
+    ctx.strokeStyle = grad(0.5, 0.25 + 0.06 * (7 - h));
+    ctx.strokeRect(ox + 0.5, oy + 0.5, side, side);
+  }
+  ctx.fillStyle = C.panel;
+  ctx.fillRect(fx, fy, side, side);
+  heatmap(ctx, fx, fy, 18, 0.5);
+  ctx.strokeStyle = grad(0.5, 0.9);
+  ctx.strokeRect(fx + 0.5, fy + 0.5, side, side);
+  ctx.fillStyle = C.dim;
+  ctx.font = `500 9px ${MONO}`;
+  ctx.fillText("HEAD 3", fx, fy + side + 16);
+
+  // Into attention: every token reaches every row it is allowed to (the mixing), out: one row per token.
+  ys.forEach((y, i) => {
+    for (let r = i; r < 7; r += 1) {
+      const weight = ATTENTION[r][i];
+      bundle(ctx, 152, y, fx, fy + r * 18 + 9, 0.4, 1 + Math.round(weight * 6), rnd, 3, 4, 0.12 + weight * 0.5);
+    }
+    // Out of the heads (right edge of the back slabs) towards the add.
+    bundle(ctx, fx + side + 49, fy - 49 + i * 18 + 9 + 49, 530, 210, 0.5, 5, rnd, 4, 6, 0.3);
+  });
+
+  mergeNode(ctx, 530, 210);
+  dashed(ctx, 565, top + 20, top + height - 20);
+  chip(ctx, 565, 210, "LayerNorm");
+
+  panel(ctx, 600, top, 330, height, "Feed-forward", "per token · 512 → 2048 → 512");
+  // Out of the add, the tokens fan back into their lanes.
+  ys.forEach((y) => bundle(ctx, 545, 210, 640, y, 0.6, 6, rnd, 4, 3, 0.35));
+  // Each token widens to 2048 and narrows back, on its own: lanes never cross.
+  ys.forEach((y, i) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let k = 0; k < 9; k += 1) {
+      const spread = (k - 4) * 3.2;
+      ctx.strokeStyle = grad(0.68, 0.18 + rnd() * 0.25);
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(640, y);
+      ctx.bezierCurveTo(700, y + spread, 830, y + spread, 890, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    dot(ctx, 640, y);
+    dot(ctx, 890, y);
+    // The 2048-wide middle, as a tick of four dots per token.
+    for (let k = -1.5; k <= 1.5; k += 1) dot(ctx, 765, y + k * 4.5, 1.3);
+  });
+  ctx.fillStyle = C.dim;
+  ctx.font = `500 9px ${MONO}`;
+  ctx.textAlign = "center";
+  ctx.fillText("512", 640, top + height - 18);
+  ctx.fillText("2048 · GELU", 765, top + height - 18);
+  ctx.fillText("512", 890, top + height - 18);
+  ctx.textAlign = "left";
+
+  ys.forEach((y) => bundle(ctx, 890, y, 965, 210, 0.8, 5, rnd, 2, 6, 0.3));
+  mergeNode(ctx, 965, 210);
+
+  panel(ctx, 1000, top, 170, height, "Output", "to block 4 · 7 × 512");
+  ys.forEach((y, i) => {
+    bundle(ctx, 980, 210, 1030, y, 0.9, 5, rnd, 4, 2, 0.35);
+    vector(ctx, 1032, y, 0.9, 80 + i);
+  });
+
+  ctx.fillStyle = C.dim;
+  ctx.font = `400 11px ${SANS}`;
+  ctx.fillText("skip connections: each part's input is added back to its output", 300, 500);
+}
+
+function drawHead() {
+  const ctx = setup("head", 1200, 360);
+  const cell = 34;
+  const x0 = 130;
+  const y0 = 70;
+
+  ctx.fillStyle = C.dim;
+  ctx.font = `500 10px ${MONO}`;
+  ctx.fillText("LOOKED AT →", x0, 34);
+  ctx.save();
+  ctx.translate(36, y0 + 130);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText("LOOKING ↓", 0, 0);
+  ctx.restore();
+
+  ATTENTION.forEach((row, i) => {
+    ctx.fillStyle = C.text;
+    ctx.font = `400 11px ${MONO}`;
+    ctx.textAlign = "right";
+    ctx.fillText(TOKENS[i], x0 - 10, y0 + i * cell + cell / 2 + 4);
+    ctx.textAlign = "left";
+    for (let j = 0; j < TOKENS.length; j += 1) {
+      const value = row[j];
+      const x = x0 + j * cell;
+      const y = y0 + i * cell;
+      if (value === undefined) {
+        ctx.fillStyle = "#121217";
+        ctx.fillRect(x, y, cell - 2, cell - 2);
+        continue;
+      }
+      ctx.fillStyle = grad(0.5, 0.08 + value * 0.92);
+      ctx.fillRect(x, y, cell - 2, cell - 2);
+      ctx.fillStyle = value > 0.45 ? "#0a0a0d" : C.dim;
+      ctx.font = `500 9px ${MONO}`;
+      ctx.textAlign = "center";
+      ctx.fillText(value.toFixed(2).replace(/^0/, ""), x + cell / 2 - 1, y + cell / 2 + 3);
+      ctx.textAlign = "left";
+    }
+  });
+  TOKENS.forEach((token, j) => {
+    ctx.save();
+    ctx.translate(x0 + j * cell + cell / 2 + 3, y0 - 8);
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillStyle = C.text;
+    ctx.font = `400 11px ${MONO}`;
+    ctx.fillText(token, 0, 0);
+    ctx.restore();
+  });
+  // Highlight it → cat.
+  ctx.strokeStyle = C.text;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x0 + 1 * cell - 1.5, y0 + 4 * cell - 1.5, cell + 1, cell + 1);
+
+  // The same row as arcs over the sentence.
+  const sx = 560;
+  const step = 88;
+  const base = 270;
+  const positions = TOKENS.map((_, i) => sx + i * step);
+  TOKENS.forEach((token, i) => {
+    ctx.fillStyle = i === 4 ? C.text : C.dim;
+    ctx.font = `${i === 4 ? 600 : 400} 14px ${MONO}`;
+    ctx.textAlign = "center";
+    ctx.fillText(token, positions[i], base + 26);
+    ctx.textAlign = "left";
+  });
+  const row = ATTENTION[4];
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  row.forEach((weight, j) => {
+    const from = positions[4];
+    const to = positions[j];
+    const height = j === 4 ? 40 : 40 + Math.abs(from - to) * 0.45;
+    ctx.strokeStyle = grad(0.5, 0.25 + weight * 0.75);
+    ctx.lineWidth = 1 + weight * 9;
+    ctx.beginPath();
+    if (j === 4) {
+      ctx.arc(from, base - 22, 14, Math.PI * 0.8, Math.PI * 2.2);
+    } else {
+      ctx.moveTo(from, base);
+      ctx.bezierCurveTo(from, base - height, to, base - height, to, base);
+    }
+    ctx.stroke();
+    ctx.fillStyle = C.text;
+    ctx.font = `500 11px ${MONO}`;
+    ctx.textAlign = "center";
+    const labelY = j === 4 ? base - 44 : base - height * 0.78 - 6;
+    ctx.fillText(weight.toFixed(2), j === 4 ? from : (from + to) / 2, labelY);
+    ctx.textAlign = "left";
+  });
+  ctx.restore();
+  ctx.fillStyle = C.dim;
+  ctx.font = `400 11px ${SANS}`;
+  ctx.fillText("row \"it\", drawn over the sentence: line width = attention", sx - 20, 336);
+}
+
+function drawAll() {
+  drawOverview();
+  drawBlock();
+  drawHead();
+}
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(drawAll);
+drawAll();
+</script>
+</body>
+</html>
