@@ -8,9 +8,10 @@ the run is improving, has converged or is overfitting, plots its predictions
 against the truth on held-out data, and shows how its parameters move.
 """
 
-import neurolume
 import torch
 from torch import nn
+
+import neurolume
 
 
 def target(x: torch.Tensor) -> torch.Tensor:

@@ -7,9 +7,11 @@ import pytest
 pytest.importorskip("qtpy.QtWebEngineWidgets")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# isort: off
 from neurolume.qt import NeurolumeWidget  # noqa: E402  (QtWebEngine before QApplication)
 from neurolume.server import demo_graph  # noqa: E402
 from qtpy.QtWidgets import QApplication  # noqa: E402
+# isort: on
 
 
 def test_widget_serves_its_model_and_swaps_it() -> None:

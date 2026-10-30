@@ -140,7 +140,6 @@ def test_dense_weights_after_flatten_use_channels_first_indices() -> None:
 
 def test_nested_models_become_groups_that_edges_pass_through() -> None:
     from keras_resnet import build_resnet
-
     from neurolume.demo import sample_digit
 
     keras.utils.set_random_seed(0)

@@ -1,122 +1,226 @@
 # Neurolume
 
-Neurolume turns PyTorch and Keras models into interactive architecture
-visualisations. It is being implemented in phases described in
-[Neural Network Visualiser – Project Plan.md](./Neural%20Network%20Visualiser%20%E2%80%93%20Project%20Plan.md).
+**See your PyTorch and Keras models as interactive diagrams, and watch them train.**
 
-## Quick start
+Neurolume runs your model once to learn its shape, then opens an interactive
+viewer in the browser: every layer as a panel, every dense connection as a
+line, feature maps painted with what the model actually sees. Several models
+wired together become one schematic you can open level by level. While you
+train, the same viewer shows the loss, whether the model is overfitting, its
+predictions against the truth, and how its parameters change, and lets you
+scrub back through the run.
 
-Install the package in editable mode with PyTorch support:
+![A 784-512-256-10 MLP in the Neurolume viewer](https://raw.githubusercontent.com/Freddie-Ellis/neurolume/main/docs/images/mlp.png)
 
-```powershell
-python -m pip install -e ".[dev,torch]"
-python examples/mlp.py
+- One call: `neurolume.show(model, sample)`. No account, no log files, nothing to set up.
+- PyTorch and Keras 3, CNNs (with real feature maps), residual and branching models.
+- Systems: several networks plus plain blocks (sensors, losses, outputs) in one diagram, nested as deep as you like.
+- Live training: a calmer, more readable alternative to TensorBoard, in the browser or embedded in a Qt app.
+- Export to one standalone HTML file that opens anywhere, offline.
+
+## Install
+
+```bash
+pip install "neurolume[torch]"      # with PyTorch
+pip install "neurolume[keras]"      # with Keras 3, plus a backend: TensorFlow, JAX or PyTorch
 ```
 
-Or from your own code:
+Neurolume needs Python 3.10 or later. The viewer runs in any modern browser;
+nothing else needs installing. (Keras with PyTorch underneath: install `torch`
+too and set `KERAS_BACKEND=torch`.)
+
+## Example 1: a model
 
 ```python
-import torch
 import neurolume
+import torch
+from torch import nn
 
-neurolume.show(model, (1, 28, 28))
+
+class MLP(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(784, 512)
+        self.relu1 = nn.ReLU()
+        self.dropout = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(512, 256)
+        self.relu2 = nn.ReLU()
+        self.fc3 = nn.Linear(256, 10)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.flatten(x)
+        x = self.dropout(self.relu1(self.fc1(x)))
+        x = self.relu2(self.fc2(x))
+        return self.fc3(x)
+
+
+neurolume.show(MLP(), (1, 28, 28))  # the shape of one input: 1 channel, 28 x 28 pixels
 ```
 
-The second argument, `sample`, tells Neurolume what goes into the model so it
-can measure each layer. PyTorch models don't record their input size, so they
-need one; Keras models that start with `keras.Input` don't. It can be:
+This opens the viewer shown at the top of this page. Each layer is a panel;
+the lines between them are the strongest weights, brighter where the weight is
+larger. Click a layer for its details, scroll to zoom, drag to pan.
 
-- the **shape** of one input, without the batch dimension, like `keras.Input`:
-  `(1, 28, 28)`. Enough to draw the architecture.
-- **real data**, such as a batch of images. This also paints each convolution's
-  feature maps with what it outputs for that input.
+The second argument, `sample`, tells Neurolume what goes into the model:
 
-Neurolume works out the order of the layers, and how they connect, by running
-`sample` through the model's `forward`. So a PyTorch model needs a `forward`
-method (or must be an `nn.Sequential`). A module that only holds layers as
-attributes, with no `forward`, can't be traced; the order you assign
-attributes in `__init__` isn't used.
+- the **shape** of one input, without the batch dimension, like `(1, 28, 28)`.
+  Enough to draw the architecture.
+- **real data**, such as a batch of images. Convolution layers then show their
+  actual feature maps for that input.
 
-`show()` starts a local server on a free port and opens the viewer. It blocks
-until Ctrl+C when run as a script, and returns a `Viewer` immediately in a REPL
-or notebook (call `viewer.stop()` to shut it down). `neurolume.to_graph(model,
-sample)` returns the graph JSON model without opening anything.
+Neurolume follows the data through your model's `forward` method to find the
+layers and how they connect, so a PyTorch model needs a `forward` (or must be
+an `nn.Sequential`). Keras models that start with `keras.Input` don't need a
+sample at all.
 
-To try the demo network, a small PyTorch classifier defined in
-`python/neurolume/demo.py` (8 inputs, four hidden layers of 12, 4 classes):
+Run it: [`examples/mlp.py`](examples/mlp.py).
 
-```powershell
-python -c "import neurolume; neurolume.show_demo()"
-```
+## Example 2: a system of networks
 
-Without torch installed, the demo still opens, using the same network from a
-ready-made graph.
-
-Framework dependencies remain optional:
-
-```powershell
-python -m pip install -e ".[torch]"
-python -m pip install -e ".[tensorflow]"
-```
-
-## Exporting a standalone file
+Real projects are often several networks wired together. Add each one, plus
+any plain blocks such as data sources or losses, and connect them:
 
 ```python
-neurolume.export_html(model, (1, 28, 28), "model.html")
+import neurolume
+from torch import nn
+
+
+def mlp(*sizes):
+    layers = []
+    for i, (inputs, outputs) in enumerate(zip(sizes, sizes[1:])):
+        layers.append(nn.Linear(inputs, outputs))
+        if i < len(sizes) - 2:
+            layers.append(nn.ReLU())
+    return nn.Sequential(*layers)
+
+
+system = neurolume.System("Sensor autoencoder")
+sensor = system.block("sensor", label="Sensor", description="32 readings per sample", output_shape=[32])
+encoder = system.add("encoder", mlp(32, 64, 64, 16), (32,), label="Encoder")
+decoder = system.add("decoder", mlp(16, 64, 64, 32), (16,), label="Decoder")
+classifier = system.add("classifier", mlp(16, 12, 3), (16,), label="Classifier")
+loss = system.block("loss", label="Reconstruction loss", description="Mean squared error", input_shape=[32])
+prediction = system.block("prediction", label="Fault type", input_shape=[3])
+
+system.connect(sensor, encoder, label="readings")
+system.connect(encoder, decoder, label="latent")
+system.connect(encoder, classifier, label="latent")
+system.connect(decoder, loss)
+system.connect(classifier, prediction, label="logits")
+
+neurolume.show(system)
 ```
 
-Writes the viewer and the graph into one HTML file (about 3 MB) that opens
-from disk, offline, with no Python running. It takes the same `sample` and
-options as `show`, and also accepts a `System`.
+![A system of three networks and three blocks](https://raw.githubusercontent.com/Freddie-Ellis/neurolume/main/docs/images/system.png)
+
+The viewer opens on an overview: one card per network or block, with labelled
+links between them. Click a card (or zoom into it) to open its layers; press
+`Esc` or zoom out to go back. Blocks can carry Markdown notes with LaTeX maths
+(`notes=...`), shown when you click them.
+
+Run it: [`examples/system.py`](examples/system.py).
+
+## Example 3: systems inside systems
+
+A component can itself be a System, or a model with parts of its own. Each one
+opens to its own overview, as many levels deep as you need:
+
+```python
+import neurolume
+from autoencoder import Autoencoder  # a model with self.encoder and self.decoder
+from system import build_system      # the System from example 2
+
+plant = neurolume.System("Plant monitor")
+camera = plant.block("camera", label="Camera", description="Noisy 28 x 28 frames", output_shape=[1, 28, 28])
+denoiser = plant.add("denoiser", Autoencoder(), (1, 28, 28), label="Denoiser")
+sensors = plant.block("sensors", label="Sensor bus", description="32 readings per tick", output_shape=[32])
+detector = plant.add("detector", build_system(), label="Fault detector")  # a whole System as one component
+alarm = plant.block("alarm", label="Alarm", description="Raise a ticket on a fault", input_shape=[3])
+display = plant.block("display", label="Operator screen", input_shape=[784])
+
+plant.connect(camera, denoiser, label="frames")
+plant.connect(denoiser, display, label="clean frames")
+plant.connect(sensors, detector, label="readings")
+plant.connect(detector, alarm, label="fault type")
+
+neurolume.show(plant)
+```
+
+![A system containing a model with parts and another whole system](https://raw.githubusercontent.com/Freddie-Ellis/neurolume/main/docs/images/nested-system.png)
+
+The "Denoiser" card opens to its encoder and decoder; the "Fault detector"
+card opens to the whole system from example 2. Links from outside attach to
+its ends: the readings reach its sensor block, and the fault type leaves from
+its prediction block. The tree at the bottom left shows every level.
+
+A single PyTorch module that keeps its parts in attributes (`self.encoder`,
+`self.decoder`) is split into networks like this automatically. Pass
+`group_submodules=False` to `show` to keep it as one network.
+
+Run it: [`examples/nested_system.py`](examples/nested_system.py).
 
 ## Watching a model train
 
+Swap `show` for `watch` and log as you go:
+
 ```python
-live = neurolume.watch(model, (1, 28, 28))   # instead of show()
-for step, (x, y) in enumerate(loader):
-    loss = train_step(x, y)
-    live.log(step, loss=loss, accuracy=acc)  # tensors are fine; cheap every step
-live.finish()                                # the viewer stays up until Ctrl+C
+live = neurolume.watch(model, (8,))
+for step in range(steps):
+    loss = train_step()                          # forward, backward, optimiser step
+    live.log(step, loss=loss)                    # after backward(); tensors are fine
+    if step % 100 == 0:
+        live.log(step, split="val", loss=val_loss)
+        live.predictions(step, predicted, target)  # e.g. on a validation batch
+live.finish()                                    # the viewer stays open until Ctrl+C
 ```
 
-The same viewer with a run strip at the bottom (step, the headline metric with
-its trend and a sparkline, pinned metrics) and the Training panel above it:
+![The Training panel: an overfitting verdict, predictions vs truth, loss curves and parameter charts](https://raw.githubusercontent.com/Freddie-Ellis/neurolume/main/docs/images/live.png)
+
+The viewer gains a run strip (step, the main metric, its trend) and a
+**Training** panel:
 
 - **Summary:** whether the run is `improving`, `levelling off`, `converged`,
-  `getting worse` or `overfitting` (validation worse than its best while
-  training still improves), the validation − training gap and the best
-  validation point. Log validation with `live.log(step, split="val", loss=...)`.
-- **Predictions vs truth:** `live.predictions(step, predicted, target)`, e.g. on
-  a validation batch: a predicted-vs-true scatter with R² and mean error, or a
-  confusion matrix when the targets are integer class labels.
-- **Metrics:** a chart per metric, `loss` and `loss/val` together (smoothing,
-  log scale, hover; reorder, hide, combine and pin, remembered per model).
-- **Parameters:** for the whole model (per network in a System), read by
-  `log()` every `every_seconds=0.5`: the weight norm (how large the values are
-  overall, √ of the sum of squares; the count is fixed), the gradient norm, how
-  far they move per step, and how their values are spread over time.
+  `getting worse` or `overfitting` (validation getting worse while training
+  still improves), the gap between validation and training, and the best
+  validation point.
+- **Predictions vs truth:** a predicted-against-true scatter with R² and mean
+  error, or a confusion matrix when the targets are class labels.
+- **Metrics:** a chart for each metric you log, with training and validation
+  together. Smooth, log-scale, reorder, hide, combine or pin them; the layout is
+  remembered per model.
+- **Parameters:** the weight norm (how large the weights are overall), the
+  gradient norm, how fast the parameters move, and how their values are spread
+  over time.
 
-The dense edges also show the weights as they train (Edges: weight, change
-since the start, or gradient). Call `log()` after `backward()` so it sees the
-gradients. Layout defaults from code: `watch(model, x, headline="reward",
-pinned=["entropy"], charts=[["loss/train", "loss/val"], "lr"])`. Click the metric's name to show another
-one (remembered per model), or pick the default with `watch(..., headline="reward")`.
-Also `with neurolume.watch(...) as live:`, and `widget.watch(model, sample)` in
-the Qt widget. Plain `show()` is unchanged. See `examples/live_training.py`.
+The network itself updates too: lines brighten and fade as the weights change
+(or show the change since the start, or the gradient), and CNN feature maps
+repaint as the filters learn. Drag the **timeline** to scrub back through the
+run. `live.save("run.nlrun")` keeps it; `neurolume.open_run("run.nlrun")` opens
+it again later.
 
-- **History:** the timeline under the strip scrubs back through the run (edges,
-  and feature maps as they were). `live.save("run.nlrun")` keeps it;
-  `neurolume.open_run("run.nlrun")` shows it again, and
-  `neurolume.export_html(live, path="run.html")` (or Settings > Export during a
-  run) makes a standalone page with the timeline.
-- **Keras:** `model.fit(x, y, callbacks=[neurolume.keras.Live(x[:64], validation=(x_val, y_val))])`;
-  see `examples/keras_live.py`. Validation metrics show as `loss/val` on the
-  loss chart, and `validation=` adds predictions vs truth each epoch.
-- **CNNs:** given real data, the feature-map slabs repaint as the model learns
-  (PyTorch).
-- **Systems:** `watch(system)` reads every network; `live.log(step,
-  network="critic", loss=...)` logs `loss/critic`; the parameter charts get a
-  line per network.
+`log()` costs microseconds; the model is read at most every half second
+(`every_seconds=0.5`): about 1% of training time for an MLP, and live feature
+maps are kept under 2%.
+
+- **Keras:** `model.fit(x, y, callbacks=[neurolume.keras.Live(x[:64], validation=(x_val, y_val))])`.
+- **Systems:** `neurolume.watch(system)` follows every network;
+  `live.log(step, network="critic", loss=...)` logs per network.
+
+Run it: [`examples/live_training.py`](examples/live_training.py) (a small
+model that overfits on purpose), [`examples/live_resnet.py`](examples/live_resnet.py)
+(ResNet-18 with live feature maps), [`examples/keras_live.py`](examples/keras_live.py).
+
+## Sharing: a standalone HTML file
+
+```python
+neurolume.export_html(model, (1, 28, 28), "model.html")
+neurolume.export_html(live, path="run.html")   # a training run, with its charts and timeline
+```
+
+One file with the viewer and your model inside. It opens from disk or an email
+attachment, offline, with no Python. The **Export** button in the viewer's
+Settings does the same.
 
 ## Embedding in a Qt app
 
@@ -125,82 +229,59 @@ from neurolume.qt import NeurolumeWidget  # import before creating the QApplicat
 
 widget = NeurolumeWidget(model, (1, 28, 28))
 layout.addWidget(widget)
-widget.set_model(other_model, sample)  # show something else
+session = widget.watch(model, sample)       # or show a live run, and log() to it
 ```
 
-A `QWebEngineView` running the same viewer as `show()`, for dropping into an
-existing Qt or QtPy app. Needs `qtpy` and a binding with QtWebEngine
-(`pip install qtpy PySide6`). The Settings > Export button asks where to save.
-See `examples/qt_widget.py`.
-
-For live training, `session = widget.watch(model, sample)` shows the run in the
-widget and returns the session to `log()` to. Train on a background thread so
-the window stays responsive (`log()` is safe from any thread); see
-`examples/qt_live.py`, a small logger with Start/Stop beside the live viewer.
-
-## Systems of networks
-
-Larger models are often several networks wired together. Link them, plus any
-plain blocks such as data sources or losses, into one schematic:
-
-```python
-system = neurolume.System("Sensor autoencoder")
-sensor = system.block("sensor", label="Sensor", output_shape=[32])
-encoder = system.add("encoder", encoder_model, torch.randn(1, 32))
-decoder = system.add("decoder", decoder_model, torch.randn(1, 16))
-system.connect(sensor, encoder)
-system.connect(encoder, decoder, label="latent")
-neurolume.show(system)
-```
-
-The viewer opens on an overview with one card per network and labelled arrows
-between them. Click a network to see its layers; press `Esc` or the Overview
-button to go back. See `examples/system.py`.
-
-A single PyTorch module that keeps its parts in attributes (`self.encoder`,
-`self.decoder`) is split into networks automatically; see
-`examples/autoencoder.py`. Pass `group_submodules=False` to `show` to keep it as
-one network.
+A `QWebEngineView` with the same viewer, for your own tools and training
+loggers. Needs `pip install "neurolume[qt]" PySide6`. See
+[`examples/qt_widget.py`](examples/qt_widget.py) and
+[`examples/qt_live.py`](examples/qt_live.py) (a logger with Start/Stop, training
+on a background thread).
 
 ## Viewer controls
 
 | Action | Control |
 | --- | --- |
+| Zoom | Scroll |
 | Pan | Drag |
-| Zoom | Scroll wheel |
-| Open a network (system overview) | Click its card |
-| Back to the overview | `Esc` or the Overview button |
-| Inspect a layer | Click its panel or band |
-| Focus a layer | Double-click it |
-| Fit to screen | `F`, the Fit button, or double-click empty space |
-| Switch light and dark | `T` or the Light/Dark button |
-| Close inspector | `Esc` |
+| Layer or block details | Click |
+| Open a network | Click, or zoom in |
+| Back to the overview | Zoom out, or `Esc` |
+| Fit to screen | Double-click, or `F` |
+| Light or dark | `T` |
+
+Settings (top right) has the colour map, the theme, how many neurons and
+connections to draw, and Export.
+
+## How it works
+
+Python runs your model once on the sample (with `torch.fx`, or Keras's own
+layer graph) and describes it as a JSON graph: layers, shapes, connections,
+the strongest weights, feature maps. A small local server
+([Tornado](https://www.tornadoweb.org)) hands that graph to a TypeScript and
+three.js viewer in your browser. During training, the same server streams
+metrics and weights over a WebSocket. Nothing leaves your machine.
 
 ## Development
 
-The frontend lives in `frontend/` (TypeScript, Vite, three.js). Rebuild it into
-`python/neurolume/static/` with:
-
-```powershell
-./scripts/build_frontend.ps1
+```bash
+git clone https://github.com/Freddie-Ellis/neurolume
+cd neurolume
+pip install -e ".[dev,torch]"
+pytest
 ```
 
-For live reloading, run `neurolume.show(model, x, port=8000)` in one terminal
-and `npm run dev` in `frontend/`; Vite proxies `/api` to the Python server.
+The viewer lives in `frontend/` (TypeScript, Vite, three.js; Node 18+). After
+changing it, rebuild it into the Python package with
+`scripts/build_frontend.ps1` (PowerShell), and run its tests with `npm test` in
+`frontend/`. For live reloading, run `neurolume.show(model, x, port=8000)` and
+`npm run dev` in `frontend/`.
 
-The graph schema in `python/neurolume/schema.py` is the contract between
-Python and the frontend. After changing it, bump `SCHEMA_VERSION` and run:
+The JSON schema in `python/neurolume/schema.py` is the contract between
+Python and the viewer: after changing it, bump `SCHEMA_VERSION` and run
+`python scripts/generate_schema_ts.py`. The roadmap is
+[`docs/project-plan.md`](docs/project-plan.md).
 
-```powershell
-python scripts/generate_schema_ts.py
-```
+## Licence
 
-Tests:
-
-```powershell
-python -m pytest          # Python: schema, adapters, weight sampling
-cd frontend; npm test     # TypeScript: layout
-```
-
-Neurolume publishes inline type hints for its Python API. Type checkers such
-as Pylance, Pyright, and mypy recognize them when the package is installed.
+MIT. See [LICENSE](LICENSE).

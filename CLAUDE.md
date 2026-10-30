@@ -1,10 +1,11 @@
 # Neurolume — notes for Claude
 
-Neurolume turns PyTorch (later Keras) models into an interactive WebGL viewer
+Neurolume turns PyTorch and Keras models into an interactive WebGL viewer
 in the browser. Python traces the model into a JSON **graph**; a TypeScript +
-three.js frontend draws it. The roadmap is `Neural Network Visualiser – Project
-Plan.md` (phases 0–6, with checkboxes); read the relevant phase before starting
-new feature work, and tick boxes only when their "Done when" criteria pass.
+three.js frontend draws it. The roadmap is `docs/project-plan.md` (phases 0–6,
+with checkboxes); read the relevant phase before starting new feature work,
+and tick boxes only when their "Done when" criteria pass. `README.md` is for
+users (it is also the PyPI page); keep it in step with the public API.
 
 More detail lives next to the code:
 - `python/neurolume/CLAUDE.md` — Python package: adapters, schema, server, System
@@ -20,6 +21,8 @@ More detail lives next to the code:
   only what the change needs, reuse existing helpers, don't add options,
   fallbacks or abstractions nobody asked for, and delete code a change makes
   dead. Prefer a small edit to a new function, and a new function to a new module.
+- README images are `docs/images/*.png` (headless Edge, 1600x900, dark), linked by absolute
+  raw.githubusercontent.com URLs so they show on PyPI; retake them when the look changes.
 - Keep the CLAUDE.md files current when behaviour or structure changes (one or
   two lines, in the right file); they are what the next session reads.
 
@@ -39,6 +42,8 @@ Frontend code must never know about PyTorch; Python must never know about render
 | Task | Command |
 | --- | --- |
 | Python tests | `.venv/Scripts/python.exe -m pytest -q` |
+| Lint (config in pyproject) | `.venv/Scripts/python.exe -m ruff check python tests examples scripts` |
+| Package for PyPI | `.venv/Scripts/python.exe -m build` then `-m twine check dist/*` (build the frontend first; never upload without the user) |
 | Frontend tests / typecheck | in `frontend/`: `npx vitest run`, `npx tsc` |
 | Build viewer into the package | `scripts/build_frontend.ps1` (always run after frontend changes) |
 | Regenerate TS schema | `.venv/Scripts/python.exe scripts/generate_schema_ts.py` |

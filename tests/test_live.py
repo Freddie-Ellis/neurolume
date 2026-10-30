@@ -6,7 +6,6 @@ import urllib.request
 
 import numpy
 import pytest
-
 from tornado.websocket import websocket_connect
 
 import neurolume

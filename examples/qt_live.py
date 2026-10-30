@@ -9,15 +9,18 @@ Run with a Qt binding that has QtWebEngine installed, e.g.
 ``uv pip install qtpy PySide6``.
 """
 
-import threading
-
-from neurolume.qt import NeurolumeWidget  # before QApplication: Qt loads QtWebEngine first
+# neurolume.qt goes first: QtWebEngine must load before anything creates the QApplication.
+# isort: skip_file
+from neurolume.qt import NeurolumeWidget
 from qtpy.QtCore import QTimer
 from qtpy.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QSplitter, QVBoxLayout, QWidget
 
+import threading
+
 import torch
-from live_training import target
 from torch import nn
+
+from live_training import target
 
 
 def build_model() -> nn.Module:
@@ -46,7 +49,8 @@ class Trainer:
         y_val = target(x_val) + 0.8 * torch.randn(512, 1)
         model = self.model
         optimiser = torch.optim.Adam(model.parameters(), lr=5e-5)
-        for self.step in range(self.steps):
+        for step in range(self.steps):
+            self.step = step
             if self.stopping.is_set():
                 break
             batch = torch.randint(0, 200, (32,))
@@ -54,12 +58,12 @@ class Trainer:
             optimiser.zero_grad()
             loss.backward()
             optimiser.step()
-            self.session.log(self.step, loss=loss)  # after backward(), so the parameter stats see the gradients
-            if self.step % 100 == 0:
+            self.session.log(step, loss=loss)  # after backward(), so the parameter stats see the gradients
+            if step % 100 == 0:
                 with torch.no_grad():
                     predicted = model(x_val)
-                self.session.log(self.step, split="val", loss=nn.functional.mse_loss(predicted, y_val))
-                self.session.predictions(self.step, predicted, y_val)
+                self.session.log(step, split="val", loss=nn.functional.mse_loss(predicted, y_val))
+                self.session.predictions(step, predicted, y_val)
         self.session.finish()  # in a widget this never blocks
 
 

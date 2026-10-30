@@ -7,10 +7,11 @@ with plain slabs. `keras_cnn.py` builds the same network in Keras, and the two
 produce matching graphs.
 """
 
-import neurolume
 import torch
-from neurolume.demo import sample_digit
 from torch import nn
+
+import neurolume
+from neurolume.demo import sample_digit
 
 
 class LeNet(nn.Module):

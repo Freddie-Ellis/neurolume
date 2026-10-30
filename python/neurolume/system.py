@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import inspect
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from .schema import FeatureMaps, Graph, GraphEdge, GraphGroup, GraphNode, ModelInfo, WeightSample
 

@@ -11,9 +11,9 @@ os.environ.setdefault("KERAS_BACKEND", "torch")
 
 import keras  # noqa: E402
 import numpy as np  # noqa: E402
-from keras_mlp import build_mlp  # noqa: E402
 
 import neurolume  # noqa: E402
+from keras_mlp import build_mlp  # noqa: E402
 
 
 def main(epochs: int = 20) -> None:

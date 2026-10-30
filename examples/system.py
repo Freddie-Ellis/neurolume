@@ -22,7 +22,6 @@ def mlp(*sizes: int) -> nn.Sequential:
 
 
 def build_system() -> neurolume.System:
-    # Example of a system with several networks and blocks. The second argument to
     torch.manual_seed(0)
     system = neurolume.System("Sensor autoencoder")
 

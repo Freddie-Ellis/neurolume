@@ -1,13 +1,28 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "neurolume"
 version = "0.1.0"
-description = "Interactive neural network architecture visualisation."
+description = "See your PyTorch and Keras models as interactive diagrams, and watch them train."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Freddie Ellis" }]
+keywords = ["neural network", "visualisation", "pytorch", "keras", "deep learning", "training", "architecture"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=1.24",
     "pydantic>=2.5",
@@ -20,8 +35,13 @@ tensorflow = ["tensorflow>=2.15"]
 keras = ["keras>=3.0"]  # Keras 3 runs on PyTorch too: set KERAS_BACKEND=torch
 # The Qt widget (neurolume.qt) also needs a binding with QtWebEngine: PySide6, or PyQt6 + PyQt6-WebEngine.
 qt = ["qtpy>=2.4"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.6", "build>=1.2"]
 examples = ["torchvision>=0.17"]  # examples/resnet.py; its test skips without it
+
+[project.urls]
+Homepage = "https://github.com/Freddie-Ellis/neurolume"
+Source = "https://github.com/Freddie-Ellis/neurolume"
+Issues = "https://github.com/Freddie-Ellis/neurolume/issues"
 
 [project.scripts]
 neurolume-demo = "neurolume:show_demo"
@@ -38,3 +58,14 @@ neurolume = ["py.typed", "static/**/*"]
 [tool.pytest.ini_options]
 pythonpath = ["python"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 160
+src = ["python", "examples", "tests"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B", "UP", "I"]
+ignore = ["B905"]  # zip() over pairs such as zip(sizes, sizes[1:]) is meant to stop at the shorter one
+
+[tool.ruff.lint.isort]
+known-first-party = ["neurolume"]

@@ -1,8 +1,9 @@
-"""A 784-512-256-10 MLP for MNIST-sized inputs, the Phase 1 reference model."""
+"""A 784-512-256-10 MLP for MNIST-sized inputs: the simplest thing to show."""
 
-import neurolume
 import torch
 from torch import nn
+
+import neurolume
 
 
 class MLP(nn.Module):

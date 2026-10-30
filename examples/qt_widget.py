@@ -4,10 +4,11 @@ Run with a Qt binding that has QtWebEngine installed, e.g.
 ``uv pip install qtpy PySide6``.
 """
 
-from neurolume.qt import NeurolumeWidget  # before QApplication: Qt loads QtWebEngine first
+# neurolume.qt goes first: QtWebEngine must load before anything creates the QApplication.
+# isort: skip_file
+from neurolume.qt import NeurolumeWidget
 from qtpy.QtWidgets import QApplication, QLabel, QMainWindow, QSplitter
 
-from mlp import MLP
 from nested_system import build_nested_system
 
 
