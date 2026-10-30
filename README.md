@@ -33,6 +33,13 @@ Neurolume needs Python 3.10 or later. The viewer runs in any modern browser;
 nothing else needs installing. (Keras with PyTorch underneath: install `torch`
 too and set `KERAS_BACKEND=torch`.)
 
+To try it straight away:
+
+```bash
+neurolume-demo          # a small network in the viewer
+neurolume-demo --live   # watch a model train (and overfit) live
+```
+
 ## Example 1: a model
 
 ```python
@@ -162,21 +169,35 @@ A single PyTorch module that keeps its parts in attributes (`self.encoder`,
 `self.decoder`) is split into networks like this automatically. Pass
 `group_submodules=False` to `show` to keep it as one network.
 
-Run it: [`examples/nested_system.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/nested_system.py).
+The two imports at the top are files in `examples/`, so run this one from a
+clone of the repository: [`examples/nested_system.py`](https://github.com/Freddie-Ellis/neurolume/blob/main/examples/nested_system.py).
 
 ## Watching a model train (beta)
 
 Swap `show` for `watch` and log as you go:
 
 ```python
-live = neurolume.watch(model, (8,))
-for step in range(steps):
-    loss = train_step()                          # forward, backward, optimiser step
-    live.log(step, loss=loss)                    # after backward(); tensors are fine
-    if step % 100 == 0:
-        live.log(step, split="val", loss=val_loss)
-        live.predictions(step, predicted, target)  # e.g. on a validation batch
-live.finish()                                    # the viewer stays open until Ctrl+C
+import neurolume
+import torch
+from torch import nn
+
+x, x_val = torch.randn(200, 8), torch.randn(500, 8)  # learn y = sin(x0) + x1 * x2
+y, y_val = (torch.sin(v[:, :1]) + v[:, 1:2] * v[:, 2:3] for v in (x, x_val))
+model = nn.Sequential(nn.Linear(8, 64), nn.ReLU(), nn.Linear(64, 1))
+optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+with neurolume.watch(model, (8,)) as live:          # the viewer stays open at the end until Ctrl+C
+    for step in range(3000):
+        loss = nn.functional.mse_loss(model(x), y)
+        optimiser.zero_grad()
+        loss.backward()
+        optimiser.step()
+        live.log(step, loss=loss)                    # after backward(); tensors are fine
+        if step % 50 == 0:
+            with torch.no_grad():
+                predicted = model(x_val)
+            live.log(step, split="val", loss=nn.functional.mse_loss(predicted, y_val))
+            live.predictions(step, predicted, y_val)  # predicted against true values
 ```
 
 ![The Training panel: an overfitting verdict, predictions vs truth, loss curves and parameter charts](https://raw.githubusercontent.com/Freddie-Ellis/neurolume/main/docs/images/live.png)

@@ -49,7 +49,7 @@ Source = "https://github.com/Freddie-Ellis/neurolume"
 Issues = "https://github.com/Freddie-Ellis/neurolume/issues"
 
 [project.scripts]
-neurolume-demo = "neurolume:show_demo"
+neurolume-demo = "neurolume.demo:main"
 
 [tool.setuptools]
 package-dir = {"" = "python"}

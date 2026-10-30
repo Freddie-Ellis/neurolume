@@ -72,3 +72,49 @@ def sample_digit(size: int = 28) -> np.ndarray:
         t = np.clip(((xs - x0) * dx + (ys - y0) * dy) / (dx * dx + dy * dy), 0, 1)
         distance = np.minimum(distance, np.hypot(xs - (x0 + t * dx), ys - (y0 + t * dy)))
     return np.clip(1.6 * scale - distance + 0.5, 0, 1).astype(np.float32)  # strokes about 3 px wide
+
+
+def live_demo(steps: int = 20000) -> None:
+    """Train a small regression model live (``examples/live_training.py``): it overfits after about 6,000 steps."""
+    import torch
+    from torch import nn
+
+    from .live import watch
+
+    def target(x: torch.Tensor) -> torch.Tensor:
+        return torch.sin(2 * x[:, :1]) + x[:, 1:2] * x[:, 2:3] - 0.5 * x[:, 3:4] ** 2
+
+    torch.manual_seed(0)
+    x_train, x_val = torch.randn(200, 8), torch.randn(512, 8)
+    y_train, y_val = target(x_train) + 0.8 * torch.randn(200, 1), target(x_val) + 0.8 * torch.randn(512, 1)
+    model = nn.Sequential(nn.Linear(8, 128), nn.ReLU(), nn.Linear(128, 128), nn.ReLU(), nn.Linear(128, 1))
+    optimiser = torch.optim.Adam(model.parameters(), lr=5e-5)
+    with watch(model, (8,)) as live:
+        for step in range(steps):
+            batch = torch.randint(0, 200, (32,))
+            loss = nn.functional.mse_loss(model(x_train[batch]), y_train[batch])
+            optimiser.zero_grad()
+            loss.backward()
+            optimiser.step()
+            live.log(step, loss=loss)
+            if step % 100 == 0:
+                with torch.no_grad():
+                    predicted = model(x_val)
+                live.log(step, split="val", loss=nn.functional.mse_loss(predicted, y_val))
+                live.predictions(step, predicted, y_val)
+
+
+def main() -> None:
+    """The ``neurolume-demo`` command: the demo network, or ``--live`` to watch a model train."""
+    import sys
+
+    from .server import show_demo
+
+    if "--live" not in sys.argv[1:]:
+        show_demo()
+        return
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        sys.exit('The live demo trains a PyTorch model: pip install "neurolume[torch]"')
+    live_demo()
