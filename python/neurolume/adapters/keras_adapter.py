@@ -131,7 +131,7 @@ def _own_layers(model: keras.Model) -> list[keras.layers.Layer]:
     return [layer for layer in model.layers if type(layer).__name__ != "InputLayer"]
 
 
-def live_sampler(model: keras.Model, graph: Graph) -> Callable[[int], dict[str, Any]]:
+def live_sampler(model: keras.Model, graph: Graph, param_sample: int = PARAM_SAMPLE) -> Callable[[int], dict[str, Any]]:
     """For live training: the Keras version of ``torch_adapter.live_sampler``, same results.
 
     Parameters are read with numpy (any backend). Gradients exist only on the
@@ -163,15 +163,12 @@ def live_sampler(model: keras.Model, graph: Graph) -> Callable[[int], dict[str, 
     variables = list(model.trainable_variables)
     total = sum(int(np.prod(variable.shape)) for variable in variables) or 1
     rng = np.random.default_rng(0)  # the values read for the percentiles: the same every time, spread by size
-    chosen = [rng.integers(0, max(1, int(np.prod(v.shape))), max(1, round(PARAM_SAMPLE * int(np.prod(v.shape)) / total))) for v in variables]
-    previous: tuple[int, list[np.ndarray]] | None = None
+    chosen = [rng.integers(0, max(1, int(np.prod(v.shape))), max(1, round(param_sample * int(np.prod(v.shape)) / total))) for v in variables]
+    previous: tuple[int, np.ndarray] | None = None  # the step and sampled values of the last reading
 
     def gradient(variable: Any) -> np.ndarray | None:
         grad = getattr(variable.value, "grad", None)  # only the torch backend keeps one
         return grad.detach().float().cpu().numpy() if grad is not None else None
-
-    def norm(arrays: list[np.ndarray]) -> float:
-        return float(np.sqrt(sum(float(np.square(a, dtype=np.float64).sum()) for a in arrays)))
 
     def read(step: int) -> dict[str, Any]:
         nonlocal previous
@@ -181,18 +178,25 @@ def live_sampler(model: keras.Model, graph: Graph) -> Callable[[int], dict[str, 
             grad = gradient(kernel)
             if grad is not None:
                 gradients[node_id] = grad[rows, columns]
-        current = [keras.ops.convert_to_numpy(variable).astype(np.float32) for variable in variables]
-        grads = [g for g in (gradient(variable) for variable in variables) if g is not None]
-        weight_norm = norm(current)
+        # One variable at a time, keeping only the sampled values: no copy of the whole model is kept.
+        weight_squares, grad_squares, sampled = 0.0, None, []
+        for variable, index in zip(variables, chosen):
+            array = keras.ops.convert_to_numpy(variable)
+            weight_squares += float(np.square(array, dtype=np.float64).sum())
+            sampled.append(array.ravel()[index].astype(np.float32))
+            grad = gradient(variable)
+            if grad is not None:
+                grad_squares = (grad_squares or 0.0) + float(np.square(grad, dtype=np.float64).sum())
+        weight_norm = float(np.sqrt(weight_squares))
+        values = np.concatenate(sampled) if sampled else np.zeros(1, dtype=np.float32)
         update = None
-        if previous is not None and step > previous[0] and norm(previous[1]) > 0:
-            update = norm([now - then for now, then in zip(current, previous[1])]) / norm(previous[1]) / (step - previous[0])
-        previous = (step, current)
-        values = np.concatenate([array.ravel()[index] for array, index in zip(current, chosen)]) if current else np.zeros(1)
+        if previous is not None and step > previous[0] and np.linalg.norm(previous[1]) > 0:
+            update = float(np.linalg.norm(values - previous[1]) / np.linalg.norm(previous[1])) / (step - previous[0])
+        previous = (step, values)
         finite = bool(np.isfinite(values).all()) and np.isfinite(weight_norm)
         stats = {
             "weight_norm": weight_norm if finite else None,
-            "grad_norm": norm(grads) if grads else None,
+            "grad_norm": float(np.sqrt(grad_squares)) if grad_squares is not None else None,
             "update_ratio": update if finite else None,
             "finite": finite,
             "percentiles": np.percentile(values, PERCENTILES).tolist() if finite else [],

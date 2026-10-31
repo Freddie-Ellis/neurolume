@@ -38,6 +38,7 @@ from .adapters.base import detect_framework
 from .schema import Graph, LiveHello, LiveLayout, LiveMetrics, LivePredictions, LiveStats, LiveStatus, LiveWeights, MetricPoint, ParamStats, RunState, SavedRun
 from .server import Viewer, _free_port, _is_interactive, create_app
 from .system import SEPARATOR, System
+from .weights import PARAM_SAMPLE
 
 FLUSH_SECONDS = 0.25
 # (predicted, true) pairs kept from a regression's predictions() call.
@@ -292,6 +293,7 @@ def start(
     pinned: list[str] | None = None,
     charts: list[str | list[str]] | None = None,
     every_seconds: float = 0.5,
+    param_sample: int = PARAM_SAMPLE,
     port: int | None = None,
     block_on_finish: bool | None = None,
     **adapter_options: Any,
@@ -301,7 +303,7 @@ def start(
     layout = LiveLayout(pinned=pinned or [], charts=[[chart] if isinstance(chart, str) else list(chart) for chart in charts or []])
     run = Run(graph, headline, layout)
     viewer = Viewer(create_app(graph, run), port or _free_port())
-    return Session(run, viewer, _model_sampler(model, graph, sample), every_seconds, block_on_finish, _maps_reader(model, graph, sample))
+    return Session(run, viewer, _model_sampler(model, graph, sample, param_sample), every_seconds, block_on_finish, _maps_reader(model, graph, sample))
 
 
 def watch(
@@ -312,6 +314,7 @@ def watch(
     pinned: list[str] | None = None,
     charts: list[str | list[str]] | None = None,
     every_seconds: float = 0.5,
+    param_sample: int = PARAM_SAMPLE,
     port: int | None = None,
     open_browser: bool = True,
     **adapter_options: Any,
@@ -326,9 +329,12 @@ def watch(
     chart each, sharing it with their own splits (``loss`` with ``loss/val``). Choices made in the viewer
     win. ``every_seconds`` is how often ``log()`` reads the weights, gradients
     and layer stats; call ``log()`` after ``backward()`` so it sees gradients.
+    ``param_sample`` is how many parameter values each reading keeps for the
+    distribution and update charts (spread over all parameters): more is more
+    precise, and costs that many floats per reading, not a copy of the model.
     """
     session = start(
-        model, sample, headline=headline, pinned=pinned, charts=charts, every_seconds=every_seconds, port=port, **adapter_options
+        model, sample, headline=headline, pinned=pinned, charts=charts, every_seconds=every_seconds, param_sample=param_sample, port=port, **adapter_options
     )
     print(f"Neurolume live viewer running at {session.url}")
     if open_browser:
@@ -359,13 +365,13 @@ def open_run(path: str | Path, *, port: int | None = None, open_browser: bool = 
     return viewer
 
 
-def _model_sampler(model: Any, graph: Graph, sample: Any) -> Callable[[int], dict[str, Any]] | None:
+def _model_sampler(model: Any, graph: Graph, sample: Any, param_sample: int = PARAM_SAMPLE) -> Callable[[int], dict[str, Any]] | None:
     """Reads weights, gradients and parameter stats of a PyTorch or Keras model, or of every network in a System.
 
     Stats come keyed by network: the model's name, or each System network's name.
     """
     if isinstance(model, System):
-        parts = _per_network(model, _model_sampler)
+        parts = _per_network(model, lambda net, net_graph, net_sample: _model_sampler(net, net_graph, net_sample, param_sample))
 
         def read_all(step: int) -> dict[str, Any]:
             merged: dict[str, Any] = {"weights": {}, "gradients": {}, "stats": {}}
@@ -387,11 +393,11 @@ def _model_sampler(model: Any, graph: Graph, sample: Any) -> Callable[[int], dic
     if framework == "keras":
         from .adapters.keras_adapter import live_sampler as keras_sampler
 
-        read = keras_sampler(model, graph)
+        read = keras_sampler(model, graph, param_sample)
     else:
         from .adapters.torch_adapter import live_sampler
 
-        read = live_sampler(model, graph.weights or {})
+        read = live_sampler(model, graph.weights or {}, param_sample)
 
     def read_one(step: int) -> dict[str, Any]:
         reading = read(step)

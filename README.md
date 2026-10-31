@@ -226,7 +226,9 @@ it again later.
 
 `log()` costs microseconds; the model is read at most every half second
 (`every_seconds=0.5`): about 1% of training time for an MLP, and live feature
-maps are kept under 2%.
+maps are kept under 2%. Memory stays small whatever the model's size: each reading
+keeps a sample of 20,000 parameter values (`param_sample=`), not a copy of the
+model.
 
 - **Keras:** `model.fit(x, y, callbacks=[neurolume.keras.Live(x[:64], validation=(x_val, y_val))])`.
 - **Systems:** `neurolume.watch(system)` follows every network, nested ones

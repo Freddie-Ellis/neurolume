@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neurolume"
-version = "0.1.1"
+version = "0.1.2"
 description = "See your PyTorch and Keras models as interactive diagrams, and watch them train."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -108,6 +108,24 @@ def test_param_stats_describe_the_whole_model() -> None:
     assert broken["finite"] is False and broken["weight_norm"] is None and broken["percentiles"] == []
 
 
+def test_update_ratio_is_estimated_from_the_param_sample() -> None:
+    torch = pytest.importorskip("torch")
+    from neurolume.adapters.torch_adapter import live_sampler
+
+    torch.manual_seed(0)
+    model = torch.nn.Sequential(torch.nn.Linear(256, 256), torch.nn.ReLU(), torch.nn.Linear(256, 64))
+    read = live_sampler(model, {}, param_sample=5000)
+    read(0)
+    before = torch.cat([p.detach().flatten() for p in model.parameters()])
+    with torch.no_grad():
+        for param in model.parameters():
+            param.add_(0.01 * torch.randn_like(param))
+    after = torch.cat([p.detach().flatten() for p in model.parameters()])
+    exact = float((after - before).norm() / before.norm()) / 4
+    reading = read(4)["stats"]
+    assert reading["update_ratio"] == pytest.approx(exact, rel=0.1)  # 5,000 of ~82,000 values estimate it well
+
+
 def test_splits_and_predictions() -> None:
     session = neurolume.watch(demo_graph(), open_browser=False)
     try:

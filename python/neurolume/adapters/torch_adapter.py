@@ -163,7 +163,7 @@ class _RecordingShapeProp(ShapeProp):
 
 
 
-def live_sampler(model: nn.Module, samples: dict[str, WeightSample]) -> Callable[[int], dict[str, Any]]:
+def live_sampler(model: nn.Module, samples: dict[str, WeightSample], param_sample: int = PARAM_SAMPLE) -> Callable[[int], dict[str, Any]]:
     """For live training: a function of the step that reads the model as it trains.
 
     It returns ``weights`` and ``gradients``, the current value and gradient of
@@ -171,7 +171,7 @@ def live_sampler(model: nn.Module, samples: dict[str, WeightSample]) -> Callable
     order, so the viewer updates the edges it already draws), and ``stats``
     about all trainable parameters together (``ParamStats``): their size, their
     gradient's size, how far they moved per step since the last call, and
-    percentiles of a fixed sample of ``PARAM_SAMPLE`` values. Computed on the
+    percentiles of a fixed sample of ``param_sample`` values. Computed on the
     model's device; only plain numbers and small float32 arrays leave it.
     Gradients are those of the last ``backward()``, so ``log()`` after
     ``backward()`` (and before ``zero_grad()``) sees them.
@@ -188,11 +188,11 @@ def live_sampler(model: nn.Module, samples: dict[str, WeightSample]) -> Callable
     # The values read for the percentiles: the same ones every time, spread over the parameters by size.
     generator = torch.Generator().manual_seed(0)
     chosen = [
-        (param, torch.randint(param.numel(), (max(1, round(PARAM_SAMPLE * param.numel() / total)),), generator=generator).to(param.device))
+        (param, torch.randint(param.numel(), (max(1, round(param_sample * param.numel() / total)),), generator=generator).to(param.device))
         for param in params
     ]
     quantiles = torch.tensor([q / 100 for q in PERCENTILES])
-    previous: tuple[int, list[torch.Tensor]] | None = None
+    previous: tuple[int, torch.Tensor] | None = None  # the step and sampled values of the last reading
 
     def norm(tensors: list[torch.Tensor]) -> float:
         return float(torch.stack([t.float().pow(2).sum() for t in tensors]).sum().sqrt()) if tensors else 0.0
@@ -208,12 +208,12 @@ def live_sampler(model: nn.Module, samples: dict[str, WeightSample]) -> Callable
             current = [param.detach() for param in params]
             grads = [param.grad.detach() for param in params if param.grad is not None]
             weight_norm = norm(current)
-            update = None
-            if previous is not None and step > previous[0]:
-                before = norm(previous[1])
-                update = norm([now - then for now, then in zip(current, previous[1])]) / before / (step - previous[0]) if before > 0 else None
-            previous = (step, [t.clone() for t in current])
             values = torch.cat([param.detach().flatten()[index].float() for param, index in chosen]).cpu() if chosen else torch.zeros(1)
+            # How far the parameters moved, from the sampled values: no copy of the whole model is kept.
+            update = None
+            if previous is not None and step > previous[0] and float(previous[1].norm()) > 0:
+                update = float((values - previous[1]).norm()) / float(previous[1].norm()) / (step - previous[0])
+            previous = (step, values)
             finite = bool(torch.isfinite(values).all()) and math.isfinite(weight_norm)
         stats = {
             "weight_norm": weight_norm if finite else None,
